@@ -4,6 +4,10 @@ Aktualizacja: wszystkie P1 (DF-001, DF-002, DF-003, DF-004, DF-013, DF-015,
 DF-016) oraz DF-017 naprawiono w głównym checkoutcie. [Zakres i walidacja](FIXES.md).
 Poniżej zachowano oryginalne reprodukcje jako zapis audytu.
 
+DF-006 również wdrożono: wybór URL albo własnego opisu, zapis oryginalnej treści,
+przekazywanie jej przez cały workflow i do PR-a. Sprawdzono formularz w przeglądarce
+oraz przebieg z deterministycznym agentem i prawdziwym lokalnym Git.
+
 P1 = blokada pracy lub duże ryzyko błędu; P2 = istotne tarcie; P3 = usprawnienie.
 „GUI” oznacza odtworzenie w aplikacji na porcie 4317. „Kod” oznacza wniosek
 z implementacji, a nie pełny test na rzeczywistych danych użytkownika.

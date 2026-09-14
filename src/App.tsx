@@ -11,6 +11,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Archive,
+  Bell,
   Check,
   CheckCheck,
   ChevronDown,
@@ -55,6 +56,8 @@ import type {
 } from '../shared/types';
 import { api, bootstrap } from './api';
 import { UsagePanel } from './UsagePanel';
+import { needsInput } from './project-attention';
+import { taskDescriptionLimit } from '../shared/task-source';
 import { parseHash, buildHash, type Page, type Tab, type Route } from './route';
 const LazyTerminalView = lazy(() => import('./TerminalView'));
 function Markdown({ children }: { children: string }) {
@@ -92,8 +95,7 @@ const emptySnapshot: Snapshot = {
   active: 0,
 };
 function column(p: Project, pending = false) {
-  if (pending || ['awaiting_plan', 'awaiting_result', 'blocked', 'interrupted'].includes(p.status))
-    return 'Needs input';
+  if (needsInput(p, pending)) return 'Needs input';
   if (p.status === 'published') return 'Published';
   return {
     prepare: 'New',
@@ -569,6 +571,18 @@ function RepositoryForm({
             />
           </Field>
           <h3 className="section-heading">Workflow defaults</h3>
+          <Field
+            label="Claude permissions"
+            hint="Applies to new projects. Planning can ask questions and still requires your approval. Auto approve runs implementation and review without tool permission prompts. You review the result and can request corrections before publishing."
+          >
+            <select
+              value={form.autoApprove ? 'auto' : 'manual'}
+              onChange={(e) => update('autoApprove', e.target.value === 'auto')}
+            >
+              <option value="manual">Standard permissions</option>
+              <option value="auto">Auto approve implementation & review</option>
+            </select>
+          </Field>
           <Button onClick={refreshSkills}>Refresh repository skills</Button>
           {skillError && (
             <div className="notice error">Could not load repository skills: {skillError}</div>
@@ -803,6 +817,9 @@ function NewProject({
   const [repoId, setRepoId] = useState(initialRepository?.id ?? ''),
     [name, setName] = useState(''),
     [ticketUrl, setTicketUrl] = useState('');
+  const [taskSource, setTaskSource] = useState<'url' | 'description'>('url');
+  const [taskDescription, setTaskDescription] = useState('');
+  const [branch, setBranch] = useState('');
   const [budget, setBudget] = useState('');
   const [choices, setChoices] = useState(initialRepository?.choices ?? defaultChoices()),
     [error, setError] = useState(''),
@@ -814,7 +831,7 @@ function NewProject({
   return (
     <Modal
       title="Start a project"
-      subtitle="One ticket. One worktree. A clear path to a pull request."
+      subtitle="One task. One worktree. A clear path to a pull request."
       close={close}
       wide
     >
@@ -826,7 +843,9 @@ function NewProject({
             await create({
               repoId,
               name,
-              ticketUrl,
+              branch,
+              taskSource,
+              ...(taskSource === 'url' ? { ticketUrl } : { taskDescription }),
               choices,
               budgetUsd: budget.trim() ? Number(budget) : null,
             });
@@ -866,18 +885,61 @@ function NewProject({
             />
           </Field>
           <Field
-            label="Ticket URL"
-            hint="The planning skill retrieves the ticket through your existing MCP or CLI tools."
+            label="Working branch"
+            hint={`A new branch for this project, based on ${repositories.find((r) => r.id === repoId)?.baseBranch || "the repository's default branch"}. Leave empty to generate a unique name automatically.`}
           >
             <input
-              required
-              type="url"
-              value={ticketUrl}
-              onChange={(e) => setTicketUrl(e.target.value)}
-              placeholder="https://linear.app/your-team/issue/…"
+              maxLength={200}
+              value={branch}
+              onChange={(e) => setBranch(e.target.value)}
+              placeholder="feature/team-invitations"
             />
           </Field>
+          <Field label="Task source">
+            <select
+              value={taskSource}
+              onChange={(e) => setTaskSource(e.target.value as 'url' | 'description')}
+            >
+              <option value="url">Ticket URL</option>
+              <option value="description">Write your own task</option>
+            </select>
+          </Field>
+          {taskSource === 'url' ? (
+            <Field
+              label="Ticket URL"
+              hint="The planning skill retrieves the ticket through your existing MCP or CLI tools."
+            >
+              <input
+                required
+                type="url"
+                maxLength={4000}
+                value={ticketUrl}
+                onChange={(e) => setTicketUrl(e.target.value)}
+                placeholder="https://linear.app/your-team/issue/…"
+              />
+            </Field>
+          ) : (
+            <Field
+              label="Task description"
+              hint="Describe the change, relevant context, and acceptance criteria. Markdown is supported; no ticket URL is needed."
+            >
+              <textarea
+                required
+                rows={8}
+                maxLength={taskDescriptionLimit}
+                value={taskDescription}
+                onChange={(e) => setTaskDescription(e.target.value)}
+                placeholder="What should change? How will you know it is done?"
+              />
+            </Field>
+          )}
           <h3 className="section-heading">Skills & models</h3>
+          {repositories.find((r) => r.id === repoId)?.autoApprove && (
+            <div className="notice">
+              Auto approve enabled: approve the plan, then implementation and review run
+              automatically. You decide whether to request corrections or publish the result.
+            </div>
+          )}
           <Field
             label="Project spending limit (USD)"
             hint="Optional. Uses SDK cost estimates across all stages and correction rounds. Blank means no limit; 0 prevents Claude calls."
@@ -1154,6 +1216,7 @@ export default function App() {
   const [confirmDelete, setConfirmDelete] = useState(false),
     [streamText, setStreamText] = useState('');
   const [pendingProjects, setPendingProjects] = useState(new Set<string>());
+  const [attentionOpen, setAttentionOpen] = useState(false);
   const ws = useRef<WebSocket | null>(null),
     live = useRef(new Set<(data: any) => void>()),
     selectedRef = useRef(selectedId),
@@ -1205,6 +1268,11 @@ export default function App() {
   const refresh = useCallback(async () => {
     const next = await api<Snapshot>('/snapshot');
     setSnapshot(next);
+    setFilter((current) =>
+      current === 'all' || next.repositories.some((repository) => repository.id === current)
+        ? current
+        : 'all',
+    );
     setPendingProjects(new Set(next.pendingProjectIds ?? []));
   }, []);
   const loadDetail = useCallback(async (id: string) => {
@@ -1386,13 +1454,14 @@ export default function App() {
     (p) =>
       (showArchived ? p.status === 'archived' : p.status !== 'archived') &&
       (filter === 'all' || p.repoId === filter) &&
-      `${p.name} ${p.ticketUrl} ${p.config.name}`.toLowerCase().includes(search.toLowerCase()),
+      `${p.name} ${p.ticketUrl ?? ''} ${p.taskDescription ?? ''} ${p.config.name}`
+        .toLowerCase()
+        .includes(search.toLowerCase()),
   );
-  const awaiting = snapshot.projects.filter(
-    (p) =>
-      ['awaiting_plan', 'awaiting_result', 'blocked', 'interrupted'].includes(p.status) ||
-      pendingProjects.has(p.id),
-  ).length;
+  const attentionProjects = snapshot.projects.filter((p) =>
+    needsInput(p, pendingProjects.has(p.id)),
+  );
+  const awaiting = attentionProjects.length;
   const terminal = detail?.terminals.find((t) => t.id === terminalId) ?? detail?.terminals[0];
   const navItems: [Page, ReactNode, string][] = [
     ['board', <LayoutDashboard size={18} />, 'Projects'],
@@ -1496,11 +1565,37 @@ export default function App() {
               </>
             )}
           </div>
-          <div className={`connection ${connected ? '' : 'offline'}`}>
-            <span />
-            {connected ? 'Local engine online' : 'Reconnecting…'}
+          <div className="topbar-actions">
+            <button
+              className={`attention-counter ${awaiting ? 'has-attention' : ''}`}
+              onClick={() => setAttentionOpen(true)}
+              aria-label={`Needs input: ${awaiting} projects`}
+              aria-haspopup="dialog"
+            >
+              <Bell size={17} />
+              <span>Needs input</span>
+              <strong>{awaiting}</strong>
+            </button>
+            <div className={`connection ${connected ? '' : 'offline'}`}>
+              <span />
+              {connected ? 'Local engine online' : 'Reconnecting…'}
+            </div>
           </div>
         </header>
+        <div role="status" aria-live="polite" aria-atomic="true">
+          {awaiting > 0 && (
+            <div className="attention-notice">
+              <Bell size={18} />
+              <span>
+                <strong>
+                  {awaiting} {awaiting === 1 ? 'project needs' : 'projects need'} your input.
+                </strong>{' '}
+                Review pending approvals, questions, or blocked work.
+              </span>
+              <Button onClick={() => setAttentionOpen(true)}>View projects</Button>
+            </div>
+          )}
+        </div>
         {error && (
           <div className="global-error" role="alert">
             <CircleAlert size={17} />
@@ -1531,9 +1626,23 @@ export default function App() {
                       <Badge tone={p!.status === 'published' ? 'green' : 'purple'}>
                         {p!.status.replaceAll('_', ' ')}
                       </Badge>
-                      <a className="text-link" href={p!.ticketUrl} target="_blank" rel="noreferrer">
-                        Open ticket <ExternalLink size={13} />
-                      </a>
+                      {p!.taskSource === 'description' ? (
+                        <button
+                          className="text-link"
+                          onClick={() => goTo({ page: 'project', id: p!.id, tab: 'Overview' })}
+                        >
+                          View task <ClipboardList size={13} />
+                        </button>
+                      ) : (
+                        <a
+                          className="text-link"
+                          href={p!.ticketUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Open ticket <ExternalLink size={13} />
+                        </a>
+                      )}
                     </div>
                   </div>
                   <div className="row">
@@ -1614,6 +1723,14 @@ export default function App() {
                   {tab === 'Overview' && (
                     <div className="overview-grid">
                       <div>
+                        {p!.taskSource === 'description' && (
+                          <section className="panel">
+                            <h3>Task description</h3>
+                            <div className="markdown">
+                              <Markdown>{p!.taskDescription ?? ''}</Markdown>
+                            </div>
+                          </section>
+                        )}
                         <UsagePanel
                           detail={detail}
                           saveBudget={(budgetUsd) =>
@@ -2278,17 +2395,6 @@ export default function App() {
                             {r.name}
                           </option>
                         ))}
-                        {[
-                          ...new Map(
-                            snapshot.projects
-                              .filter((p) => !snapshot.repositories.some((r) => r.id === p.repoId))
-                              .map((p) => [p.repoId, p.config]),
-                          ).values(),
-                        ].map((r) => (
-                          <option key={r.id} value={r.id}>
-                            {r.name} (removed)
-                          </option>
-                        ))}
                       </select>
                     </div>
                   </div>
@@ -2360,8 +2466,17 @@ export default function App() {
                                   </div>
                                   <h3>{p.name}</h3>
                                   <div className="card-ticket">
-                                    <ExternalLink size={11} />
-                                    {new URL(p.ticketUrl).hostname}
+                                    {p.taskSource === 'description' ? (
+                                      <>
+                                        <ClipboardList size={11} />
+                                        Own task
+                                      </>
+                                    ) : (
+                                      <>
+                                        <ExternalLink size={11} />
+                                        {p.ticketUrl ? new URL(p.ticketUrl).hostname : 'Task'}
+                                      </>
+                                    )}
                                   </div>
                                   <div className="card-stage">
                                     <Badge
@@ -2696,6 +2811,40 @@ export default function App() {
             await refresh();
           }}
         />
+      )}
+      {attentionOpen && (
+        <Modal
+          title={`Needs input (${awaiting})`}
+          subtitle="Across all repositories"
+          close={() => setAttentionOpen(false)}
+        >
+          <div className="modal-body attention-list">
+            {attentionProjects.length === 0 ? (
+              <p>No projects need your input.</p>
+            ) : (
+              attentionProjects.map((project) => (
+                <button
+                  key={project.id}
+                  onClick={() => {
+                    setAttentionOpen(false);
+                    openProject(project);
+                  }}
+                >
+                  <div>
+                    <strong>{project.name}</strong>
+                    <span>{project.config.name}</span>
+                  </div>
+                  <span>
+                    {pendingProjects.has(project.id)
+                      ? 'Answer question'
+                      : project.status.replaceAll('_', ' ')}
+                  </span>
+                  <ArrowRight size={16} />
+                </button>
+              ))
+            )}
+          </div>
+        </Modal>
       )}
       {projectModal && (
         <NewProject

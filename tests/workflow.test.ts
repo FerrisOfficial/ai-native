@@ -211,6 +211,76 @@ async function fixture() {
 }
 
 describe('Workflow lifecycle with real Git and deterministic Claude', () => {
+  it('validates project branch names and reserves names before queued work starts', async () => {
+    const f = await fixture();
+    f.store.setSetting('concurrency', 0);
+    const input = {
+      name: 'Custom branch',
+      repoId: f.repository.id,
+      ticketUrl: 'https://example.test/42',
+    };
+    for (const branch of ['bad name', '-option', 'feature/../escape', '@{-1}', 'HEAD', 'main']) {
+      await expect(f.w.create({ ...input, branch })).rejects.toThrow(/branch/i);
+    }
+    expect(f.store.all('projects')).toHaveLength(0);
+    const first = await f.w.create({ ...input, branch: '  feature/custom-task  ' });
+    expect(first.branch).toBe('feature/custom-task');
+    await expect(f.w.create({ ...input, branch: first.branch })).rejects.toThrow('reserved');
+    const second = await f.w.create({ ...input, branch: 'feature/another-task' });
+    expect(second.branch).toBe('feature/another-task');
+    expect(f.store.get('repositories', f.repository.id)).toEqual(f.repository);
+    const automatic = await f.w.create({ ...input, branch: ' ' });
+    expect(automatic.branch).toMatch(/^ai\/custom-branch-/);
+  }, 60000);
+  it('carries a user-written task through planning, corrections and publication without a URL', async () => {
+    const f = await fixture();
+    f.repository.autoApprove = true;
+    f.store.put('repositories', f.repository);
+    const description = 'Add Polish search.\n\nAcceptance: preserve existing filters.';
+    const p = await f.w.create({
+      name: 'Own task',
+      branch: 'feature/own-task',
+      repoId: f.repository.id,
+      taskSource: 'description',
+      taskDescription: description,
+      ticketUrl: 'https://ignored.example.test',
+    });
+    await settled(f.w, p.id, 'awaiting_plan');
+    expect(f.w.get(p.id).config.autoApprove).toBe(true);
+    expect(f.agent.calls.every((call) => call.stage === 'plan')).toBe(true);
+    f.store.put('repositories', { ...f.repository, autoApprove: false });
+    expect(f.w.get(p.id).config.autoApprove).toBe(true);
+    expect(await f.git.git(['branch', '--show-current'], p.worktree)).toBe('feature/own-task');
+    expect(await f.git.git(['rev-parse', 'HEAD'], p.worktree)).toBe(
+      await f.git.git(['rev-parse', 'refs/remotes/origin/main'], f.repo),
+    );
+    expect(f.w.get(p.id).taskDescription).toBe(description);
+    expect(f.w.get(p.id).ticketUrl).toBeUndefined();
+    expect(f.agent.calls[0].prompt).toContain('do not fetch or request one');
+    f.w.revisePlan(p.id, 'Include a regression check for filtering');
+    await settled(f.w, p.id, 'awaiting_plan');
+    expect(f.agent.calls.at(-1)!.prompt).toContain(description);
+    expect(f.agent.calls.at(-1)!.prompt).toContain('Include a regression check for filtering');
+    f.w.approvePlan(p.id);
+    await settled(f.w, p.id, 'awaiting_result');
+    for (const call of f.agent.calls) {
+      expect(call.prompt).toContain(description);
+      expect(call.prompt).not.toContain('ignored.example.test');
+    }
+    const review = f.w.get(p.id).review!;
+    f.w.correct(p.id, [review.items[0].id], 'Keep the source task intact');
+    await settled(f.w, p.id, 'awaiting_result');
+    expect(f.w.get(p.id).taskDescription).toBe(description);
+    await f.w.approvePublication(p.id);
+    const published = await settled(f.w, p.id, 'published');
+    const message = await f.git.git(['log', '-1', '--format=%B'], published.worktree);
+    expect(message).toContain('Task source: user-provided description');
+    expect(message).not.toContain('undefined');
+    const body = await readFile(join(p.skillRoot, '..', 'pull-request.md'), 'utf8');
+    expect(body).toContain(description);
+    expect(body).not.toContain('undefined');
+    expect(f.state.ghCreates).toBe(1);
+  }, 60000);
   it('isolates two projects, snapshots skills, gates implementation, and performs only selected corrections', async () => {
     const { w, agent, repo, skills, store, create, state, root, git } = await fixture();
     const first = await create(),

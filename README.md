@@ -50,12 +50,15 @@ discovers `tests/**/*.test.ts`, excluding cloned worktrees and application data.
 2. In **Repositories**, add an existing local repository root. Set a base branch or leave it empty to detect the default from `origin`.
 3. Choose a skill and model for **Plan**, **Implement**, and **Review**. Model discovery is best effort; you can type any alias or full model ID supported by your Claude installation. `default` inherits your Claude model.
 4. Set optional PowerShell setup and test commands, local files to copy, and named terminals.
-5. Create a project with a name and an HTTP(S) ticket URL. The planning skill retrieves the ticket using your configured MCP or CLI tools. The application does not need a connector for each ticket provider.
-6. Approve or revise the plan. After implementation, inspect tests and review. Select findings and add instructions for one correction round, or approve publication as a draft PR.
+5. Create a project with a name and choose its task source: an HTTP(S) ticket URL or your own task description. For a URL, the planning skill retrieves the ticket using your configured MCP or CLI tools. For your own task, describe the change, relevant context, and acceptance criteria; no ticket URL is needed. The original description stays available in the project overview and follows the task through planning, implementation, review, and the pull request.
+6. Optionally set **Working branch** for this project, for example `feature/team-invitations`. Leave it empty to generate a unique name. The worktree starts from the repository's configured base branch; the working branch name belongs only to the project and must not conflict with an existing branch or another project's reserved name.
+7. Approve or revise the plan. After implementation, inspect tests and review. Select findings and add instructions for one correction round, or approve publication as a draft PR.
 
 The source repository needs an `origin` remote and an initial commit. New branches start from the configured remote branch after a successful fetch. Uncommitted source-checkout changes are not carried into the new worktree. Existing project settings are snapshots; editing a repository changes defaults for future projects only.
 
 ## Workflow and permissions
+
+In repository settings, **Claude permissions → Auto approve implementation & review** enables Claude's `bypassPermissions` mode for those two stages in new projects. Planning keeps interactive clarification and manual plan approval. Implementation, review, and correction rounds then run without tool permission prompts or questions; unresolved issues are reported in the result. The application still waits for the user's review and explicit publication approval. Review retains its read-only instructions and edit-tool restrictions; lifecycle commands remain controlled by the host. This setting is off by default and is copied into each new project's configuration.
 
 ### Suggested repository configuration
 

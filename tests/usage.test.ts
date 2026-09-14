@@ -20,6 +20,72 @@ beforeEach(() => {
     ),
   );
 });
+
+it.each(['plan', 'implementation', 'review'] as const)(
+  'applies repository auto approve only after planning: %s',
+  async (stage) => {
+    const store = await fixture();
+    try {
+      const p = {
+        ...project,
+        budgetUsd: null,
+        config: { autoApprove: true },
+        choices: {
+          plan: { skill: 'example-plan', model: 'default' },
+          implementation: { skill: 'example-implement', model: 'default' },
+          review: { skill: 'example-review', model: 'default' },
+        },
+      } as Project;
+      const driver = new ClaudeDriver(store);
+      mock.messages = [
+        {
+          ...result,
+          structured_output:
+            stage === 'plan'
+              ? result.structured_output
+              : stage === 'review'
+                ? { summary: 'Reviewed', items: [] }
+                : { summary: 'Implemented' },
+        },
+      ];
+      await driver.execute({
+        project: p,
+        stage,
+        prompt: 'test',
+        signal: new AbortController().signal,
+      });
+      const options = mock.query.mock.calls.at(-1)![0].options;
+      expect(options.permissionMode).toBe(stage === 'plan' ? 'plan' : 'bypassPermissions');
+      expect(options.allowDangerouslySkipPermissions).toBe(stage !== 'plan');
+      expect(options.disallowedTools.includes('AskUserQuestion')).toBe(stage !== 'plan');
+      const hook = options.hooks.PreToolUse[0].hooks[0];
+      const check = async (name: string, input: Record<string, unknown> = {}) =>
+        (await hook({ hook_event_name: 'PreToolUse', tool_name: name, tool_input: input }))
+          .hookSpecificOutput?.permissionDecision;
+      expect(await check('Bash', { command: 'npm test' })).toBe(stage === 'plan' ? 'ask' : 'allow');
+      expect(await check('Bash', { command: 'git push' })).toBe('deny');
+      if (stage === 'review')
+        expect(await check('Write', { file_path: 'a.txt', content: 'test' })).toBe('deny');
+      const controller = new AbortController();
+      const answer = driver.permission(
+        p,
+        { id: 'session', projectId: p.id, stage, createdAt: '' },
+        'AskUserQuestion',
+        { questions: [] },
+        controller.signal,
+      );
+      if (stage === 'plan') {
+        expect(store.all('questions')).toHaveLength(1);
+        controller.abort();
+      } else {
+        expect(store.all('questions')).toHaveLength(0);
+      }
+      expect((await answer).behavior).toBe('deny');
+    } finally {
+      store.close();
+    }
+  },
+);
 async function fixture() {
   const root = await testDirectory();
   return new Store(join(root, 'usage.sqlite'));

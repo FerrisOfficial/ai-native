@@ -289,15 +289,93 @@ nav button.active {
   min-width: 0;
 }
 .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 15;
   height: 67px;
   background: #fff;
   border-bottom: 1px solid var(--border);
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 16px;
   padding: 0 34px;
 }
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-shrink: 0;
+}
+.attention-counter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #fff;
+  font-size: 11px;
+}
+.attention-counter.has-attention {
+  color: #80500d;
+  background: #fff5df;
+  border-color: #efdab1;
+}
+.attention-counter strong {
+  min-width: 20px;
+  text-align: center;
+  border-radius: 5px;
+  background: #0000000a;
+  padding: 2px 4px;
+}
+.attention-notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 34px;
+  background: #fff5df;
+  color: #80500d;
+  border-bottom: 1px solid #efdab1;
+  font-size: 12px;
+}
+.attention-notice > span {
+  flex: 1;
+}
+.attention-notice > svg {
+  flex-shrink: 0;
+}
+.attention-list {
+  display: grid;
+  gap: 10px;
+}
+.attention-list > button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  padding: 14px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.attention-list > button:hover {
+  background: var(--purple-light);
+}
+.attention-list > button > div {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.attention-list span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 4px;
+}
 .breadcrumb {
+  min-width: 0;
+  overflow: hidden;
   display: flex;
   gap: 12px;
   font-size: 11px;
@@ -1981,6 +2059,18 @@ main {
   .topbar {
     padding: 0 16px;
     height: 55px;
+  }
+  .topbar .connection,
+  .attention-counter > span {
+    display: none;
+  }
+  .breadcrumb {
+    min-width: 0;
+    overflow: hidden;
+  }
+  .attention-notice {
+    padding: 12px 16px;
+    flex-wrap: wrap;
   }
   .connection {
     font-size: 8px;

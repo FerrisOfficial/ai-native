@@ -32,6 +32,7 @@ export const repoSchema = z.object({
   name: z.string().trim().min(1).max(100),
   path: z.string().min(1),
   baseBranch: z.string().default(''),
+  autoApprove: z.boolean().optional(),
   setupCommand: z.string().default(''),
   testCommand: z.string().default(''),
   copyFiles: z.array(z.string().min(1)).default([]),
@@ -81,7 +82,10 @@ export type Project = {
   budgetUsd?: number | null;
   id: string;
   name: string;
-  ticketUrl: string;
+  /** Missing source on older projects means a ticket URL. */
+  taskSource?: 'url' | 'description';
+  ticketUrl?: string;
+  taskDescription?: string;
   repoId: string;
   config: Repository;
   choices: Choices;

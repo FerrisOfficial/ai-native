@@ -11,6 +11,7 @@ import {
 } from 'node:fs/promises';
 import { dirname, join, resolve, relative, isAbsolute } from 'node:path';
 import type { Project, RepoInput } from '../shared/types.js';
+import { taskSourceText } from '../shared/task-source.js';
 import { checked, run, type CommandRunner } from './process.js';
 import { inside } from './skills.js';
 
@@ -22,6 +23,33 @@ export class GitService {
   ) {}
   git(args: string[], cwd: string) {
     return checked(this.runner, 'git', args, cwd);
+  }
+  async validateNewBranch(branch: string, path: string) {
+    let validated: string;
+    try {
+      validated = await this.git(['check-ref-format', '--branch', branch], path);
+    } catch {
+      throw new Error(
+        'Invalid branch name. Use a Git branch name such as feature/team-invitations.',
+      );
+    }
+    if (validated !== branch || branch.startsWith('-') || branch.includes('@{'))
+      throw new Error('Enter a literal Git branch name, not a branch shortcut.');
+    const refs = await this.git(
+      ['for-each-ref', '--format=%(refname)', 'refs/heads', 'refs/remotes/origin'],
+      path,
+    );
+    const names = refs
+      .split('\n')
+      .map((ref) => ref.replace(/^refs\/(heads\/|remotes\/origin\/)/, ''));
+    if (
+      names.some(
+        (name) => name === branch || name.startsWith(`${branch}/`) || branch.startsWith(`${name}/`),
+      )
+    )
+      throw new Error(
+        `Branch "${branch}" already exists or conflicts with an existing branch. Choose a new name.`,
+      );
   }
   async inspect(input: RepoInput): Promise<{ path: string; baseBranch: string; remote: string }> {
     const path = await realpath(input.path);
@@ -81,6 +109,7 @@ export class GitService {
     }
     if (!exists) {
       await this.git(['fetch', 'origin'], p.config.path);
+      await this.validateNewBranch(p.branch, p.config.path);
       const base = await this.git(
         ['rev-parse', '--verify', `refs/remotes/origin/${p.config.baseBranch}^{commit}`],
         p.config.path,
@@ -212,7 +241,7 @@ export class GitService {
       [
         'commit',
         '-m',
-        `${p.name}\n\nTicket: ${p.ticketUrl}\n\nAI-Native-Project: ${p.id}\nAI-Native-Approval: ${p.acceptedFingerprint}`,
+        `${p.name}\n\n${p.taskSource === 'description' ? 'Task source: user-provided description' : `Ticket: ${p.ticketUrl}`}\n\nAI-Native-Project: ${p.id}\nAI-Native-Approval: ${p.acceptedFingerprint}`,
       ],
       p.worktree,
     );
@@ -250,7 +279,7 @@ export class GitService {
     ];
     const existing = JSON.parse(await checked(this.runner, 'gh', args, p.worktree));
     if (existing[0]?.url) return existing[0].url;
-    const body = `## Task\n${p.ticketUrl}\n\n## Summary\n${p.summary ?? p.review?.summary ?? p.name}\n\n## Validation\nTests: ${p.tests?.status ?? 'not_configured'}\n\n${p.review?.summary ?? ''}\n\nCreated by AI Native Workflow. Project: ${p.id}`;
+    const body = `## Task\n${taskSourceText(p)}\n\n## Summary\n${p.summary ?? p.review?.summary ?? p.name}\n\n## Validation\nTests: ${p.tests?.status ?? 'not_configured'}\n\n${p.review?.summary ?? ''}\n\nCreated by AI Native Workflow. Project: ${p.id}`;
     const bodyFile = join(dirname(p.skillRoot), 'pull-request.md');
     await writeFile(bodyFile, body, 'utf8');
     return checked(
