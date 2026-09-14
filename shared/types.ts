@@ -39,9 +39,19 @@ export const repoSchema = z.object({
   choices: choicesSchema,
 });
 export type RepoInput = z.infer<typeof repoSchema>;
+export type RepoSuggestion = {
+  detected: string[];
+  evidence: string[];
+  warnings: string[];
+  setupCommand: string;
+  testCommand: string;
+  terminals: z.infer<typeof terminalSpecSchema>[];
+};
+export const budgetSchema = z.number().finite().min(0).max(1000000).nullable();
 export type Repository = RepoInput & { id: string; createdAt: string; remote: string };
 export type Choices = z.infer<typeof choicesSchema>;
 export type Skill = {
+  source?: 'application' | 'repository';
   id: string;
   name: string;
   description: string;
@@ -63,6 +73,7 @@ export type TestReport = {
   exitCode: number | null;
 };
 export type Project = {
+  budgetUsd?: number | null;
   id: string;
   name: string;
   ticketUrl: string;
@@ -94,6 +105,15 @@ export type Project = {
   setupComplete?: boolean;
 };
 export type Run = {
+  usage?: {
+    costUsd: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+    apiDurationMs: number;
+  };
+  usageExpected?: boolean;
   id: string;
   projectId: string;
   stage: Stage;
@@ -111,6 +131,7 @@ export type Session = {
   createdAt: string;
 };
 export type TerminalRecord = {
+  removedAt?: string;
   id: string;
   projectId: string;
   name: string;

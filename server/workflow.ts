@@ -13,7 +13,8 @@ import type {
   Stage,
   TerminalRecord,
 } from '../shared/types.js';
-import { choicesSchema, repoSchema } from '../shared/types.js';
+import { choicesSchema, repoSchema, budgetSchema } from '../shared/types.js';
+import { projectRuns, remainingBudget } from './usage.js';
 import { Store } from './store.js';
 import { GitService } from './git.js';
 import { snapshotSkills, scanSkills } from './skills.js';
@@ -22,6 +23,7 @@ import { Terminals } from './terminals.js';
 import { run, shellCommand, type CommandRunner } from './process.js';
 
 export const projectInput = z.object({
+  budgetUsd: budgetSchema.optional(),
   name: z.string().trim().min(1).max(150),
   ticketUrl: z.url().refine((s) => /^https?:\/\//.test(s), 'Use an http(s) ticket URL'),
   repoId: z.string(),
@@ -114,7 +116,7 @@ export class Workflow {
     const id = randomUUID(),
       choices = input.choices ?? repository.choices;
     const skillRoot = join(this.dataRoot, 'projects', id, 'plugin');
-    await snapshotSkills(this.skillsRoot, skillRoot, choices);
+    await snapshotSkills(this.skillsRoot, skillRoot, choices, repository.path);
     const slug =
       input.name
         .toLowerCase()
@@ -122,6 +124,7 @@ export class Workflow {
         .replace(/^-|-$/g, '')
         .slice(0, 40) || 'task';
     const p: Project = {
+      budgetUsd: input.budgetUsd ?? null,
       id,
       repoId: repository.id,
       name: input.name,
@@ -184,6 +187,7 @@ export class Workflow {
   }
   async step<T>(id: string, stage: Stage, action: () => Promise<T>): Promise<T> {
     const r: Run = {
+      usageExpected: false,
       id: randomUUID(),
       projectId: id,
       stage,
@@ -194,11 +198,15 @@ export class Workflow {
     this.save({ ...this.get(id), stage });
     try {
       const result = await action();
-      this.store.put('runs', { ...r, status: 'complete', finishedAt: new Date().toISOString() });
+      this.store.put('runs', {
+        ...this.store.get<Run>('runs', r.id)!,
+        status: 'complete',
+        finishedAt: new Date().toISOString(),
+      });
       return result;
     } catch (e) {
       this.store.put('runs', {
-        ...r,
+        ...this.store.get<Run>('runs', r.id)!,
         status: this.active.get(id)?.controller.signal.aborted ? 'interrupted' : 'failed',
         error: String(e),
         finishedAt: new Date().toISOString(),
@@ -219,6 +227,7 @@ export class Workflow {
     return result;
   }
   async agentStep(p: Project, stage: AgentStage, prompt: string, signal: AbortSignal) {
+    remainingBudget(projectRuns(this.store, p.id), p.budgetUsd);
     const fingerprint = stage !== 'implementation' ? await this.git.fingerprint(p) : undefined;
     const result = await this.agent.execute({ project: p, stage, prompt, signal });
     if (signal.aborted) throw new Error('Interrupted by user');
@@ -471,9 +480,11 @@ export class Workflow {
   detail(id: string) {
     return {
       project: this.get(id),
-      runs: this.store.all<Run>('runs').filter((r) => r.projectId === id),
+      runs: projectRuns(this.store, id),
       sessions: this.store.all<Session>('sessions').filter((s) => s.projectId === id),
-      terminals: this.store.all<TerminalRecord>('terminals').filter((t) => t.projectId === id),
+      terminals: this.store
+        .all<TerminalRecord>('terminals')
+        .filter((t) => t.projectId === id && !t.removedAt),
       questions: this.store.all<Question>('questions').filter((q) => q.projectId === id),
       events: this.store.events(id, 0, 500),
     };

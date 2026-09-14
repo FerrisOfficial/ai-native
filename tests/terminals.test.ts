@@ -41,6 +41,13 @@ it('runs an actual interactive shell, preserves output and waits for termination
     expect(terminals.active.has(t.id)).toBe(false);
     expect(store.get<TerminalRecord>('terminals', t.id)?.status).toBe('exited');
     expect(store.get<TerminalRecord>('terminals', t.id)?.output).toContain('INTERACTIVE_OK');
+    terminals.start(p, { name: 'Test shell', command: '', env: {} }, t.id);
+    await terminals.remove(t.id);
+    expect(terminals.active.has(t.id)).toBe(false);
+    expect(store.get<TerminalRecord>('terminals', t.id)?.removedAt).toBeTruthy();
+    expect(store.get<TerminalRecord>('terminals', t.id)?.output).toContain('INTERACTIVE_OK');
+    expect(() => terminals.start(p, t, t.id)).toThrow('removed');
+    await terminals.remove(t.id);
   } finally {
     await terminals.close();
     store.close();

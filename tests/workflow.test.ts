@@ -439,6 +439,34 @@ describe('Local API and user input', () => {
     await settled(f.w, p.id, 'awaiting_plan');
     const detail = (await app.inject({ url: `/api/projects/${p.id}`, headers: auth })).json();
     expect(detail.project.plan).toContain('feature.txt');
+    const detection = await app.inject({
+      url: '/api/repositories/detect',
+      method: 'POST',
+      headers: auth,
+      payload: { path: p.config.path },
+    });
+    expect(detection.statusCode).toBe(200);
+    expect(f.w.get(p.id).config.setupCommand).toBe('setup-command');
+    expect(
+      (
+        await app.inject({
+          url: `/api/projects/${p.id}/budget`,
+          method: 'PUT',
+          headers: auth,
+          payload: { budgetUsd: -1 },
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(
+      (
+        await app.inject({
+          url: `/api/projects/${p.id}/budget`,
+          method: 'PUT',
+          headers: auth,
+          payload: { budgetUsd: 0 },
+        })
+      ).statusCode,
+    ).toBe(200);
     const approve = await app.inject({
       url: `/api/projects/${p.id}/actions/approve-plan`,
       method: 'POST',
@@ -446,6 +474,15 @@ describe('Local API and user input', () => {
       payload: {},
     });
     expect(approve.statusCode).toBe(200);
+    expect((await settled(f.w, p.id, 'blocked')).error).toContain('spending limit');
+    expect(f.agent.calls.filter((c) => c.stage === 'implementation')).toHaveLength(0);
+    await app.inject({
+      url: `/api/projects/${p.id}/budget`,
+      method: 'PUT',
+      headers: auth,
+      payload: { budgetUsd: null },
+    });
+    f.w.enqueue(p.id);
     await settled(f.w, p.id, 'awaiting_result');
   }, 60000);
   it('round-trips permissions, answers and interruption through the driver without a model call', async () => {

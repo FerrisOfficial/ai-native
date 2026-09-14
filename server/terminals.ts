@@ -6,6 +6,7 @@ import { Store } from './store.js';
 export class Terminals {
   active = new Map<string, pty.IPty>();
   stopping = new Map<string, Promise<void>>();
+  removing = new Set<string>();
   constructor(public store: Store) {}
   start(
     project: Project,
@@ -13,6 +14,13 @@ export class Terminals {
     existingId?: string,
   ) {
     if (project.worktreeRemoved) throw new Error('Worktree has been removed');
+    if (
+      existingId &&
+      (this.removing.has(existingId) ||
+        this.stopping.has(existingId) ||
+        this.store.get<TerminalRecord>('terminals', existingId)?.removedAt)
+    )
+      throw new Error('Terminal is stopping or has been removed');
     const record: TerminalRecord = {
       id: existingId ?? randomUUID(),
       projectId: project.id,
@@ -127,6 +135,21 @@ export class Terminals {
         .filter((t) => t.projectId === id)
         .map((t) => this.stop(t.id)),
     );
+  }
+  async remove(id: string) {
+    const record = this.store.get<TerminalRecord>('terminals', id);
+    if (!record) throw new Error('Terminal not found');
+    if (record.removedAt) return;
+    if (this.removing.has(id)) throw new Error('Terminal removal is in progress');
+    this.removing.add(id);
+    try {
+      await this.stop(id);
+      const current = this.store.get<TerminalRecord>('terminals', id)!;
+      this.store.put('terminals', { ...current, removedAt: new Date().toISOString() });
+      this.store.event('terminal_removed', { id }, record.projectId);
+    } finally {
+      this.removing.delete(id);
+    }
   }
   async close() {
     await Promise.all([...this.active.keys()].map((id) => this.stop(id)));

@@ -10,6 +10,9 @@ import type { Question, TerminalRecord, WorkflowEvent } from '../shared/types.js
 import { Workflow } from './workflow.js';
 import { ClaudeDriver } from './claude.js';
 import { run } from './process.js';
+import { availableSkills } from './skills.js';
+import { detectRepository } from './detect.js';
+import { budgetSchema } from '../shared/types.js';
 
 export async function createApp(
   workflow: Workflow,
@@ -144,6 +147,21 @@ export async function createApp(
     }
   });
   app.post('/api/repositories', async (request) => workflow.repository(request.body));
+  app.post('/api/skills/discover', async (request) => {
+    const { path } = z.object({ path: z.string().min(1) }).parse(request.body);
+    await workflow.git.git(['rev-parse', '--show-toplevel'], path);
+    return availableSkills(workflow.skillsRoot, path);
+  });
+  app.post('/api/repositories/detect', async (request) => {
+    const { path } = z.object({ path: z.string().min(1) }).parse(request.body);
+    const root = await workflow.git.git(['rev-parse', '--show-toplevel'], path);
+    return detectRepository(root);
+  });
+  app.put<{ Params: { id: string } }>('/api/projects/:id/budget', async (request) => {
+    const { budgetUsd } = z.object({ budgetUsd: budgetSchema }).parse(request.body);
+    const project = workflow.idle(request.params.id);
+    return workflow.save({ ...project, budgetUsd });
+  });
   app.put<{ Params: { id: string } }>('/api/repositories/:id', async (request) =>
     workflow.repository(request.body, request.params.id),
   );
@@ -241,9 +259,10 @@ export async function createApp(
     '/api/terminals/:id/:action',
     async (request) => {
       const t = workflow.store.get<TerminalRecord>('terminals', request.params.id);
-      if (!t) throw new Error('Terminal not found');
+      if (!t || t.removedAt) throw new Error('Terminal not found');
       const p = workflow.get(t.projectId);
       if (request.params.action === 'stop') await workflow.terminals.stop(t.id);
+      else if (request.params.action === 'remove') await workflow.terminals.remove(t.id);
       else if (request.params.action === 'restart') {
         if (
           p.status === 'archived' ||
@@ -287,7 +306,7 @@ export async function createApp(
           ])
           .parse(JSON.parse(bytes.toString()));
         const terminal = workflow.store.get<TerminalRecord>('terminals', input.terminalId);
-        if (!terminal) throw new Error('Terminal not found');
+        if (!terminal || terminal.removedAt) throw new Error('Terminal not found');
         const p = workflow.get(terminal.projectId);
         if (input.type === 'attach') {
           send({

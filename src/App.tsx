@@ -42,10 +42,12 @@ import type {
   RepoInput,
   Skill,
   Snapshot,
+  RepoSuggestion,
   TerminalRecord,
   WorkflowEvent,
 } from '../shared/types';
 import { api, bootstrap } from './api';
+import { UsagePanel } from './UsagePanel';
 const LazyTerminalView = lazy(() => import('./TerminalView'));
 function Markdown({ children }: { children: string }) {
   return (
@@ -194,6 +196,30 @@ const defaultChoices = (): Choices => ({
   review: { skill: '', model: 'default' },
 });
 
+function useRepositorySkills(path: string, application: Skill[]) {
+  const [result, setResult] = useState<{ path: string; skills: Skill[]; error: string }>();
+  const [revision, refresh] = useState(0);
+  useEffect(() => {
+    let current = true;
+    const timer = setTimeout(() => {
+      if (!path.trim()) return;
+      api<Skill[]>('/skills/discover', { path }).then(
+        (skills) => current && setResult({ path, skills, error: '' }),
+        (error) => current && setResult({ path, skills: application, error: errorMessage(error) }),
+      );
+    }, 350);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [path, application, revision]);
+  return {
+    skills: result?.path === path ? result.skills : application,
+    skillError: result?.path === path ? result.error : '',
+    refreshSkills: () => refresh((value) => value + 1),
+  };
+}
+
 function ChoicesFields({
   value,
   change,
@@ -220,11 +246,17 @@ function ChoicesFields({
               required
             >
               <option value="">Choose a skill</option>
+              {value[stage].skill &&
+                !skills.some((s) => s.valid && s.id === value[stage].skill) && (
+                  <option value={value[stage].skill} disabled>
+                    Unavailable: {value[stage].skill}
+                  </option>
+                )}
               {skills
                 .filter((s) => s.valid)
                 .map((s) => (
                   <option key={s.id} value={s.id}>
-                    {s.name}
+                    {s.name} — {s.source === 'repository' ? 'Repository' : 'Application'}
                   </option>
                 ))}
             </select>
@@ -255,7 +287,7 @@ function ChoicesFields({
 
 function RepositoryForm({
   initial,
-  skills,
+  skills: applicationSkills,
   models,
   close,
   save,
@@ -279,6 +311,8 @@ function RepositoryForm({
     },
   );
   const [files, setFiles] = useState(initial?.copyFiles.join('\n') ?? '');
+  const [suggestion, setSuggestion] = useState<{ path: string; value: RepoSuggestion }>();
+  const { skills, skillError, refreshSkills } = useRepositorySkills(form.path, applicationSkills);
   const [envText, setEnvText] = useState<string[]>(
     initial?.terminals.map((t) =>
       Object.entries(t.env)
@@ -362,6 +396,17 @@ function RepositoryForm({
             />
           </Field>
           <h3 className="section-heading">Workflow defaults</h3>
+          <Button onClick={refreshSkills}>Refresh repository skills</Button>
+          {skillError && (
+            <div className="notice error">Could not load repository skills: {skillError}</div>
+          )}
+          {skills
+            .filter((s) => !s.valid)
+            .map((s) => (
+              <div className="notice error" key={s.id}>
+                {s.name}: {s.error}
+              </div>
+            ))}
           <ChoicesFields
             value={form.choices}
             change={(c) => update('choices', c)}
@@ -370,11 +415,77 @@ function RepositoryForm({
           />
           {!skills.some((s) => s.valid) && (
             <div className="notice">
-              Add skills to the application's skills folder first. All three stages require a valid
-              skill.
+              Add skills to the application's skills folder or the repository's .claude/skills
+              folder. All three stages require a valid skill.
             </div>
           )}
           <h3 className="section-heading">Workspace setup</h3>
+          <Button
+            disabled={busy || !form.path.trim()}
+            onClick={async () => {
+              const path = form.path;
+              setBusy(true);
+              setError('');
+              setSuggestion(undefined);
+              try {
+                setSuggestion({
+                  path,
+                  value: await api<RepoSuggestion>('/repositories/detect', { path }),
+                });
+              } catch (error) {
+                setError(errorMessage(error));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            <Search size={14} /> Detect configuration
+          </Button>
+          {suggestion?.path === form.path && (
+            <section className="panel detection-preview">
+              <h3>Suggested configuration</h3>
+              <p>{suggestion.value.detected.join(' · ') || 'Unknown project type'}</p>
+              <p className="muted">
+                Based on: {suggestion.value.evidence.join(', ') || 'root files'}
+              </p>
+              <p>
+                Setup: <code>{suggestion.value.setupCommand || 'Not needed / not detected'}</code>
+              </p>
+              <p>
+                Tests: <code>{suggestion.value.testCommand || 'Not configured'}</code>
+              </p>
+              {suggestion.value.terminals.map((t) => (
+                <p key={t.id}>
+                  {t.name}: <code>{t.command}</code>
+                </p>
+              ))}
+              {suggestion.value.warnings.map((w) => (
+                <p className="muted" key={w}>
+                  {w}
+                </p>
+              ))}
+              <p>
+                Applying replaces setup, tests and named terminals in this form. Review the fields,
+                then save.
+              </p>
+              <Button
+                disabled={busy}
+                onClick={() => {
+                  setForm((current) => ({
+                    ...current,
+                    setupCommand: suggestion.value.setupCommand,
+                    testCommand: suggestion.value.testCommand,
+                    terminals: suggestion.value.terminals,
+                  }));
+                  setEnvText(suggestion.value.terminals.map(() => ''));
+                  setSuggestion(undefined);
+                }}
+              >
+                Apply suggestions to form
+              </Button>
+              <Button onClick={() => setSuggestion(undefined)}>Dismiss</Button>
+            </section>
+          )}
           <Field
             label="Setup command"
             hint="Runs once in a new worktree, before the named terminals start."
@@ -501,7 +612,7 @@ function RepositoryForm({
 
 function NewProject({
   repositories,
-  skills,
+  skills: applicationSkills,
   models,
   close,
   create,
@@ -515,9 +626,14 @@ function NewProject({
   const [repoId, setRepoId] = useState(repositories[0]?.id ?? ''),
     [name, setName] = useState(''),
     [ticketUrl, setTicketUrl] = useState('');
+  const [budget, setBudget] = useState('');
   const [choices, setChoices] = useState(repositories[0]?.choices ?? defaultChoices()),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
+  const { skills, skillError, refreshSkills } = useRepositorySkills(
+    repositories.find((r) => r.id === repoId)?.path ?? '',
+    applicationSkills,
+  );
   return (
     <Modal
       title="Start a project"
@@ -530,7 +646,13 @@ function NewProject({
           e.preventDefault();
           setBusy(true);
           try {
-            await create({ repoId, name, ticketUrl, choices });
+            await create({
+              repoId,
+              name,
+              ticketUrl,
+              choices,
+              budgetUsd: budget.trim() ? Number(budget) : null,
+            });
             close();
           } catch (error) {
             setError(errorMessage(error));
@@ -579,6 +701,24 @@ function NewProject({
             />
           </Field>
           <h3 className="section-heading">Skills & models</h3>
+          <Field
+            label="Project spending limit (USD)"
+            hint="Optional. Uses SDK cost estimates across all stages and correction rounds. Blank means no limit; 0 prevents Claude calls."
+          >
+            <input
+              type="number"
+              min="0"
+              max="1000000"
+              step="0.01"
+              value={budget}
+              onChange={(e) => setBudget(e.target.value)}
+              placeholder="No limit"
+            />
+          </Field>
+          <Button onClick={refreshSkills}>Refresh repository skills</Button>
+          {skillError && (
+            <div className="notice error">Could not load repository skills: {skillError}</div>
+          )}
           <ChoicesFields value={choices} change={setChoices} skills={skills} models={models} />
           <div className="notice soft">
             <ShieldCheck size={18} />
@@ -1133,6 +1273,13 @@ export default function App() {
                   {tab === 'Overview' && (
                     <div className="overview-grid">
                       <div>
+                        <UsagePanel
+                          detail={detail}
+                          saveBudget={(budgetUsd) =>
+                            perform(() => api(`/projects/${p!.id}/budget`, { budgetUsd }, 'PUT'))
+                          }
+                          busy={busy}
+                        />
                         <section className="panel">
                           <h3>Project summary</h3>
                           {p!.summary ? (
@@ -1562,6 +1709,7 @@ export default function App() {
                             <div className="row">
                               {terminal.status === 'running' ? (
                                 <button
+                                  disabled={busy}
                                   onClick={() =>
                                     perform(() => api(`/terminals/${terminal.id}/stop`, {}))
                                   }
@@ -1570,7 +1718,7 @@ export default function App() {
                                 </button>
                               ) : (
                                 <button
-                                  disabled={p!.status === 'archived' || p!.worktreeRemoved}
+                                  disabled={busy || p!.status === 'archived' || p!.worktreeRemoved}
                                   onClick={() =>
                                     perform(() => api(`/terminals/${terminal.id}/restart`, {}))
                                   }
@@ -1578,6 +1726,18 @@ export default function App() {
                                   <Play size={13} /> Restart
                                 </button>
                               )}
+                              <button
+                                disabled={busy}
+                                title="Stop this terminal and remove it from the list"
+                                onClick={() =>
+                                  perform(async () => {
+                                    await api(`/terminals/${terminal.id}/remove`, {});
+                                    setTerminalId(undefined);
+                                  })
+                                }
+                              >
+                                <Trash2 size={13} /> Remove
+                              </button>
                             </div>
                           </div>
                           <TerminalView

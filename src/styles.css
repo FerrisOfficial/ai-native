@@ -2122,3 +2122,46 @@ main {
     transition: none !important;
   }
 }
+
+.usage-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  margin: 18px 0;
+}
+.usage-totals strong {
+  display: block;
+  font-size: 22px;
+}
+.usage-totals small,
+.usage-table small {
+  display: block;
+  color: var(--muted);
+}
+.usage-table-scroll {
+  overflow-x: auto;
+}
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.usage-table th,
+.usage-table td {
+  text-align: left;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.budget-form {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  margin-top: 16px;
+}
+.detection-preview {
+  margin: 12px 0;
+}
+.detection-preview code {
+  overflow-wrap: anywhere;
+}

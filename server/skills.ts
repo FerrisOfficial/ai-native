@@ -1,4 +1,5 @@
-import { readdir, readFile, lstat, mkdir, cp, writeFile } from 'node:fs/promises';
+import { readdir, readFile, lstat, mkdir, cp, writeFile, realpath } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { join, resolve, relative, isAbsolute } from 'node:path';
 import { parse } from 'yaml';
 import type { Choices, Skill } from '../shared/types.js';
@@ -21,8 +22,16 @@ async function noLinks(dir: string): Promise<void> {
     if (stat.isDirectory()) await noLinks(path);
   }
 }
-export async function scanSkills(root: string): Promise<Skill[]> {
-  await mkdir(root, { recursive: true });
+export async function scanSkills(root: string, create = true): Promise<Skill[]> {
+  if (create) await mkdir(root, { recursive: true });
+  else {
+    try {
+      await lstat(root);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
+  }
   const result: Skill[] = [];
   for (const entry of await readdir(root, { withFileTypes: true })) {
     if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
@@ -51,8 +60,46 @@ export async function scanSkills(root: string): Promise<Skill[]> {
   }
   return result.sort((a, b) => a.name.localeCompare(b.name));
 }
-export async function snapshotSkills(root: string, destination: string, choices: Choices) {
-  const skills = await scanSkills(root);
+async function repositorySkillRoot(repository: string) {
+  const base = await realpath(repository);
+  const root = join(base, '.claude', 'skills');
+  for (const path of [join(base, '.claude'), root]) {
+    try {
+      if ((await lstat(path)).isSymbolicLink() || !inside(base, await realpath(path)))
+        throw new Error('Repository skill directories cannot be symlinks or junctions');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  return root;
+}
+export async function availableSkills(root: string, repository?: string): Promise<Skill[]> {
+  const application = (await scanSkills(root)).map((s) => ({
+    ...s,
+    source: 'application' as const,
+  }));
+  if (!repository) return application;
+  const local = await scanSkills(await repositorySkillRoot(repository), false);
+  return [
+    ...application,
+    ...local.map((s) => ({ ...s, id: `repo:${s.id}`, source: 'repository' as const })),
+  ];
+}
+export function bundledSkillName(id: string) {
+  return id.startsWith('repo:')
+    ? `repository-${createHash('sha256').update(id).digest('hex').slice(0, 24)}`
+    : id;
+}
+export async function snapshotSkills(
+  root: string,
+  destination: string,
+  choices: Choices,
+  repository?: string,
+) {
+  const skills = await availableSkills(root, repository);
+  const selected = [...new Set(Object.values(choices).map((c) => c.skill))];
+  if (new Set(selected.map(bundledSkillName)).size !== selected.length)
+    throw new Error('Selected skill bundle names conflict; rename the application skill');
   for (const id of new Set(Object.values(choices).map((c) => c.skill))) {
     const skill = skills.find((s) => s.id === id);
     if (!skill?.valid) throw new Error(`Invalid skill ${id}: ${skill?.error ?? 'not found'}`);
@@ -66,10 +113,27 @@ export async function snapshotSkills(root: string, destination: string, choices:
       description: 'Immutable project workflow skills',
     }),
   );
-  for (const id of new Set(Object.values(choices).map((c) => c.skill)))
-    await cp(join(root, id), join(destination, 'skills', id), {
+  for (const id of selected) {
+    const local = id.startsWith('repo:');
+    const sourceRoot = local ? await repositorySkillRoot(repository!) : root;
+    const name = bundledSkillName(id);
+    const target = join(destination, 'skills', name);
+    await cp(join(sourceRoot, local ? id.slice(5) : id), target, {
       recursive: true,
       errorOnExist: true,
       force: false,
     });
+    if (local) {
+      const file = join(target, 'SKILL.md');
+      const content = await readFile(file, 'utf8');
+      await writeFile(
+        file,
+        content.replace(/^(---\r?\n)([\s\S]*?)(\r?\n---)/, (_match, start, yaml, end) => {
+          const meta = parse(yaml);
+          meta.name = name;
+          return `${start}${JSON.stringify(meta)}${end}`;
+        }),
+      );
+    }
+  }
 }

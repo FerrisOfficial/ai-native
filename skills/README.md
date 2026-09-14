@@ -4,6 +4,10 @@ Add skills manually as `skills/<skill-id>/SKILL.md`, then choose **Refresh skill
 
 ## Included examples
 
+The stage selectors also discover skills in the selected repository's `.claude/skills/<skill-id>/SKILL.md`. Enter the repository path in its settings or select a repository in **New project**; discovery runs automatically. Use **Refresh repository skills** to rescan after editing files. Options show **Application** or **Repository**, so identical names stay distinct. Invalid skills cannot be selected.
+
+Repository skills use the same validation rules as the application library. Their instructions and supporting files are copied from the local source checkout when a project is created, even when they are uncommitted or ignored by Git. Later edits do not change existing project snapshots. Repository skill directories must not use symlinks or junctions. The application assigns repository copies unique internal names when loading its session plugin; original files stay unchanged. The **Skills** library page lists application skills; repository skills appear in the repository and project selectors.
+
 Choose **Skills → Refresh skills**, then set these selections in **Repositories**:
 
 | Stage     | Skill               |
