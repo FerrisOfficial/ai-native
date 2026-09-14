@@ -1,0 +1,51 @@
+{
+  "name": "ai-native-workflow",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx server/index.ts",
+    "dev:ui": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "start": "tsx server/index.ts",
+    "test": "vitest run",
+    "check": "tsc --noEmit",
+    "probe:claude": "tsx scripts/probe-claude.ts",
+    "test:ui-fixture": "tsx scripts/ui-fixture.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "latest",
+    "@fastify/static": "latest",
+    "@fastify/websocket": "latest",
+    "@xterm/addon-fit": "latest",
+    "@xterm/xterm": "latest",
+    "fastify": "latest",
+    "lucide-react": "latest",
+    "node-pty": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-markdown": "latest",
+    "yaml": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
+    "prettier": "^3.9.6",
+    "tsx": "latest",
+    "typescript": "latest",
+    "vite": "latest",
+    "vitest": "latest"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "allowScripts": {
+    "node-pty@1.1.0": true,
+    "esbuild@0.28.2": true
+  }
+}
