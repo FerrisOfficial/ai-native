@@ -58,7 +58,7 @@ class FixtureAgent implements AgentDriver {
         project,
         session,
         'Bash',
-        { command: 'gh issue view 42 --json title,body' },
+        { command: process.env.UI_PERMISSION_COMMAND ?? 'gh issue view 42 --json title,body' },
         signal,
       );
       if (permission.behavior === 'deny') throw new Error('Ticket tool permission was denied.');

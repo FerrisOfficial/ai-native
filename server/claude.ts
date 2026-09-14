@@ -46,7 +46,12 @@ export interface AgentDriver {
   interrupt(projectId: string): Promise<void>;
   answer(
     questionId: string,
-    answer: { allow?: boolean; remember?: boolean; answers?: Record<string, string> },
+    answer: {
+      allow?: boolean;
+      remember?: boolean;
+      commandPrefix?: string;
+      answers?: Record<string, string>;
+    },
   ): void;
 }
 export class ClaudeDriver implements AgentDriver {
@@ -102,12 +107,19 @@ export class ClaudeDriver implements AgentDriver {
   }
   answer(
     id: string,
-    answer: { allow?: boolean; remember?: boolean; answers?: Record<string, string> },
+    answer: {
+      allow?: boolean;
+      remember?: boolean;
+      commandPrefix?: string;
+      answers?: Record<string, string>;
+    },
   ) {
     const question = this.store.get<Question>('questions', id),
       resolve = this.pending.get(id);
     if (!question || question.status !== 'pending' || !resolve)
       throw new Error('This question is no longer pending; resume the interrupted session');
+    if (answer.commandPrefix !== undefined && !answer.remember)
+      throw new Error('A command prefix requires a remembered approval');
     if (answer.remember && (question.kind !== 'permission' || answer.allow !== true))
       throw new Error('Only allowed commands can be remembered');
     if (question.kind === 'question') {
@@ -120,7 +132,7 @@ export class ClaudeDriver implements AgentDriver {
       if (answer.remember) {
         const project = this.store.get<Project>('projects', question.projectId);
         if (!project) throw new Error('Project not found');
-        rememberCommand(this.store, project, question.tool, question.input);
+        rememberCommand(this.store, project, question.tool, question.input, answer.commandPrefix);
       }
       resolve(
         answer.allow
@@ -243,7 +255,7 @@ export class ClaudeDriver implements AgentDriver {
                       hookSpecificOutput: {
                         hookEventName: 'PreToolUse',
                         permissionDecision: 'allow',
-                        permissionDecisionReason: 'Exact command approved for this repository',
+                        permissionDecisionReason: 'Command approved for this repository',
                       },
                     };
                   }

@@ -262,6 +262,7 @@ export async function createApp(
         .object({
           allow: z.boolean().optional(),
           remember: z.boolean().optional(),
+          commandPrefix: z.string().trim().min(1).max(200).optional(),
           answers: z.record(z.string(), z.string()).optional(),
         })
         .parse(request.body),

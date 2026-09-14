@@ -223,3 +223,86 @@ it('remembers exact commands per repo, supports revocation, and keeps lifecycle 
     store.close();
   }
 });
+
+it('saves prefix approvals from questions and applies them across arguments without widening repo or options', async () => {
+  const store = await fixture();
+  try {
+    const { findCommand, savedCommands } = await import('../server/permissions.js');
+    const p = { ...project, repoId: 'prefix-repo', budgetUsd: null };
+    store.put('projects', p);
+    store.put('repositories', { id: p.repoId });
+    const driver = new ClaudeDriver(store);
+    const session = {
+      id: 'prefix-session',
+      projectId: p.id,
+      stage: 'plan' as const,
+      createdAt: '',
+    };
+    const signal = new AbortController().signal;
+    const pending = driver.permission(
+      p,
+      session,
+      'Bash',
+      { command: 'grep first README.md' },
+      signal,
+    );
+    const question = store.all<{ id: string }>('questions').at(-1)!;
+    expect(() =>
+      driver.answer(question.id, { allow: true, remember: true, commandPrefix: 'rm' }),
+    ).toThrow('prefix');
+    driver.answer(question.id, { allow: true, remember: true, commandPrefix: 'grep' });
+    expect((await pending).behavior).toBe('allow');
+    expect(savedCommands(store, p.repoId)[0]).toMatchObject({ scope: 'prefix', prefix: 'grep' });
+    expect(
+      (
+        await driver.permission(
+          p,
+          session,
+          'Bash',
+          { command: 'grep second file.txt', timeout: 10000 },
+          signal,
+        )
+      ).behavior,
+    ).toBe('allow');
+    expect(
+      findCommand(store, { ...p, repoId: 'different' }, 'Bash', {
+        command: 'grep second file.txt',
+      }),
+    ).toBeUndefined();
+    expect(
+      findCommand(store, p, 'PowerShell', { command: 'grep second file.txt' }),
+    ).toBeUndefined();
+    expect(
+      findCommand(store, p, 'Bash', { command: 'grep second file.txt', run_in_background: true }),
+    ).toBeUndefined();
+    expect(
+      findCommand(store, p, 'Bash', { command: 'grep second file.txt && whoami' }),
+    ).toBeUndefined();
+    mock.messages = [result];
+    await driver.execute({ project: p, stage: 'plan', prompt: 'test', signal });
+    const hook = mock.query.mock.calls.at(-1)![0].options.hooks.PreToolUse[0].hooks[0];
+    expect(
+      (
+        await hook({
+          hook_event_name: 'PreToolUse',
+          tool_name: 'Bash',
+          tool_input: { command: 'grep third file' },
+        })
+      ).hookSpecificOutput.permissionDecision,
+    ).toBe('allow');
+    expect(
+      (
+        await hook({
+          hook_event_name: 'PreToolUse',
+          tool_name: 'Bash',
+          tool_input: { command: 'grep third file && git push' },
+        })
+      ).hookSpecificOutput.permissionDecision,
+    ).toBe('deny');
+    const permission = savedCommands(store, p.repoId)[0];
+    store.put('command_permissions', { ...permission, revokedAt: new Date().toISOString() });
+    expect(findCommand(store, p, 'Bash', { command: 'grep second file.txt' })).toBeUndefined();
+  } finally {
+    store.close();
+  }
+});

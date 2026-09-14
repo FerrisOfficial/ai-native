@@ -1,3 +1,4 @@
+import { simpleCommandTokens, matchesCommandPrefix } from '../shared/command-permissions';
 import type { CommandPermission } from '../shared/types';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
@@ -299,15 +300,39 @@ function RepositoryPermissions({ repoId }: { repoId: string }) {
     <section className="panel">
       <h3>Saved command permissions</h3>
       <p className="muted">
-        Approvals apply to this repository’s projects. Commands and execution options must match
-        exactly; descriptions are ignored. Workflow restrictions still apply. Revoking affects
+        Approvals apply to this repository’s projects. Exact approvals match one invocation. Command
+        prefixes allow any arguments after the listed command (for example grep or npm test).
+        Compound shell syntax still prompts. Workflow restrictions still apply. Revoking affects
         future calls.
       </p>
       {permissions.length === 0 && <p className="muted">No saved permissions.</p>}
       {permissions.map((permission) => (
         <div key={permission.id}>
-          <strong>{permission.tool}</strong>
-          <pre>{JSON.stringify(permission.input, null, 2)}</pre>
+          <strong>
+            {permission.tool} ·{' '}
+            {permission.scope === 'prefix' ? 'Command prefix · any arguments' : 'Exact invocation'}
+          </strong>
+          <pre>
+            {permission.scope === 'prefix'
+              ? permission.prefix + ' …'
+              : JSON.stringify(permission.input, null, 2)}
+          </pre>
+          {permission.scope === 'prefix' && (
+            <details>
+              <summary>Execution options</summary>
+              <pre>
+                {JSON.stringify(
+                  Object.fromEntries(
+                    Object.entries(permission.input).filter(
+                      ([key]) => !['command', 'description', 'timeout'].includes(key),
+                    ),
+                  ),
+                  null,
+                  2,
+                )}
+              </pre>
+            </details>
+          )}
           <Button
             disabled={busy}
             onClick={async () => {
@@ -802,6 +827,11 @@ function QuestionCard({
   const [answers, setAnswers] = useState<Record<string, string>>({}),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
+  const [permissionScope, setPermissionScope] = useState<'exact' | 'prefix'>('exact');
+  const [commandPrefix, setCommandPrefix] = useState(
+    simpleCommandTokens(String(question.input.command ?? ''))?.[0] ?? '',
+  );
+  const prefixValid = matchesCommandPrefix(String(question.input.command ?? ''), commandPrefix);
   const questions = (question.input.questions ?? []) as {
     question: string;
     header?: string;
@@ -830,6 +860,42 @@ function QuestionCard({
         <>
           <p className="muted">{question.tool}</p>
           <pre>{JSON.stringify(question.input, null, 2)}</pre>
+          {['Bash', 'PowerShell'].includes(question.tool) &&
+            typeof question.input.command === 'string' && (
+              <>
+                <Field label="Repository approval scope">
+                  <select
+                    value={permissionScope}
+                    onChange={(e) => setPermissionScope(e.target.value as 'exact' | 'prefix')}
+                  >
+                    <option value="exact">This exact invocation</option>
+                    <option value="prefix">Command prefix — any arguments</option>
+                  </select>
+                </Field>
+                {permissionScope === 'prefix' && (
+                  <>
+                    <Field label="Allowed command prefix">
+                      <input
+                        value={commandPrefix}
+                        placeholder="grep or npm test"
+                        onChange={(e) => setCommandPrefix(e.target.value)}
+                      />
+                    </Field>
+                    <p className="muted">
+                      Allows any arguments after this prefix in this repository. Use a subcommand
+                      such as npm test to narrow the scope. Compound commands, redirections and
+                      shell expansions still prompt.
+                    </p>
+                    {!prefixValid && (
+                      <p className="notice">
+                        Enter the command name or initial words of this simple invocation. Complex
+                        shell syntax requires an exact approval.
+                      </p>
+                    )}
+                  </>
+                )}
+              </>
+            )}
           <div className="row">
             <Button onClick={() => submit({ allow: false })} disabled={busy}>
               Deny
@@ -840,7 +906,16 @@ function QuestionCard({
             {['Bash', 'PowerShell'].includes(question.tool) &&
               typeof question.input.command === 'string' &&
               question.input.command.trim() && (
-                <Button onClick={() => submit({ allow: true, remember: true })} disabled={busy}>
+                <Button
+                  onClick={() =>
+                    submit({
+                      allow: true,
+                      remember: true,
+                      ...(permissionScope === 'prefix' ? { commandPrefix } : {}),
+                    })
+                  }
+                  disabled={busy || (permissionScope === 'prefix' && !prefixValid)}
+                >
                   Allow for this repository
                 </Button>
               )}

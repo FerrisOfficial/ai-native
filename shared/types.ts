@@ -191,6 +191,8 @@ export type ProjectDetail = {
 };
 
 export interface CommandPermission {
+  scope?: 'exact' | 'prefix';
+  prefix?: string;
   id: string;
   repoId: string;
   tool: string;
