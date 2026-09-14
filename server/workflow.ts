@@ -28,6 +28,7 @@ export const projectInput = z
     budgetUsd: budgetSchema.optional(),
     name: z.string().trim().min(1).max(150),
     branch: z.string().trim().max(200).optional(),
+    reuseExistingBranch: z.boolean().optional(),
     taskSource: z.enum(['url', 'description']).default('url'),
     ticketUrl: z.string().trim().max(4000).optional(),
     taskDescription: z.string().trim().max(taskDescriptionLimit).optional(),
@@ -145,7 +146,15 @@ export class Workflow {
     const input = projectInput.parse(raw);
     const repository = this.store.get<Repository>('repositories', input.repoId);
     if (!repository || repository.removedAt) throw new Error('Repository not found');
-    if (input.branch) await this.git.validateNewBranch(input.branch, repository.path);
+    let reuseBranch: Project['reuseBranch'];
+    if (input.branch) {
+      await this.git.git(['fetch', 'origin'], repository.path);
+      reuseBranch = await this.git.validateNewBranch(
+        input.branch,
+        repository.path,
+        input.reuseExistingBranch,
+      );
+    }
     const id = randomUUID(),
       choices = input.choices ?? repository.choices;
     const skillRoot = join(this.dataRoot, 'projects', id, 'plugin');
@@ -170,6 +179,7 @@ export class Workflow {
       status: 'new',
       stage: 'prepare',
       branch: input.branch || `ai/${slug}-${id.slice(0, 8)}`,
+      reuseBranch,
       worktree: join(this.git.root, id),
       skillRoot,
       createdAt: new Date().toISOString(),
@@ -185,6 +195,7 @@ export class Workflow {
         .some(
           (other) =>
             other.config.path === repository.path &&
+            !other.worktreeRemoved &&
             (other.branch === p.branch ||
               other.branch.startsWith(`${p.branch}/`) ||
               p.branch.startsWith(`${other.branch}/`)),

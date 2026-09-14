@@ -65,6 +65,10 @@ export async function createApp(
   });
   app.setErrorHandler((error, _request, reply) => {
     reply.code(error instanceof z.ZodError ? 400 : 409).send({
+      code:
+        (error as { code?: string }).code === 'BRANCH_CONFIRMATION_REQUIRED'
+          ? 'BRANCH_CONFIRMATION_REQUIRED'
+          : undefined,
       error:
         error instanceof z.ZodError
           ? error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')

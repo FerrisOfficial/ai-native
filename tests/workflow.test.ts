@@ -211,6 +211,47 @@ async function fixture() {
 }
 
 describe('Workflow lifecycle with real Git and deterministic Claude', () => {
+  it.each(['local', 'remote'] as const)(
+    'continues an existing %s branch only after confirmation and preserves its history',
+    async (source) => {
+      const f = await fixture();
+      const branch = 'feature/previous-work';
+      await f.git.git(['checkout', '-b', branch], f.repo);
+      await writeFile(join(f.repo, 'previous.txt'), 'Previous task\n');
+      await f.git.git(['add', 'previous.txt'], f.repo);
+      await f.git.git(['commit', '-m', 'Previous task'], f.repo);
+      const tip = await f.git.git(['rev-parse', 'HEAD'], f.repo);
+      await f.git.git(['push', 'origin', branch], f.repo);
+      await f.git.git(['checkout', 'main'], f.repo);
+      if (source === 'remote') await f.git.git(['branch', '-D', branch], f.repo);
+      const input = {
+        name: 'Continue task',
+        repoId: f.repository.id,
+        ticketUrl: 'https://example.test/task',
+        branch,
+      };
+      await expect(f.w.create(input)).rejects.toMatchObject({
+        code: 'BRANCH_CONFIRMATION_REQUIRED',
+      });
+      expect(f.store.all('projects')).toHaveLength(0);
+      const p = await f.w.create({ ...input, reuseExistingBranch: true });
+      await settled(f.w, p.id, 'awaiting_plan');
+      expect(f.w.get(p.id).reuseBranch).toBe(source);
+      expect(f.w.get(p.id).baseCommit).toBe(tip);
+      expect(
+        (await readFile(join(p.worktree, 'previous.txt'), 'utf8')).replaceAll('\r\n', '\n'),
+      ).toBe('Previous task\n');
+      await expect(f.w.create({ ...input, reuseExistingBranch: true })).rejects.toThrow(
+        'another worktree',
+      );
+      await f.w.archive(p.id);
+      await f.w.removeWorktree(p.id);
+      const next = await f.w.create({ ...input, reuseExistingBranch: true });
+      await settled(f.w, next.id, 'awaiting_plan');
+      expect(f.w.get(next.id).baseCommit).toBe(tip);
+    },
+    60000,
+  );
   it('validates project branch names and reserves names before queued work starts', async () => {
     const f = await fixture();
     f.store.setSetting('concurrency', 0);

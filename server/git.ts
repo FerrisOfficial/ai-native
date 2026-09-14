@@ -24,7 +24,11 @@ export class GitService {
   git(args: string[], cwd: string) {
     return checked(this.runner, 'git', args, cwd);
   }
-  async validateNewBranch(branch: string, path: string) {
+  async validateNewBranch(
+    branch: string,
+    path: string,
+    allowExisting = false,
+  ): Promise<'local' | 'remote' | undefined> {
     let validated: string;
     try {
       validated = await this.git(['check-ref-format', '--branch', branch], path);
@@ -42,14 +46,30 @@ export class GitService {
     const names = refs
       .split('\n')
       .map((ref) => ref.replace(/^refs\/(heads\/|remotes\/origin\/)/, ''));
-    if (
-      names.some(
-        (name) => name === branch || name.startsWith(`${branch}/`) || branch.startsWith(`${name}/`),
-      )
-    )
+    if (names.some((name) => name.startsWith(`${branch}/`) || branch.startsWith(`${name}/`)))
       throw new Error(
-        `Branch "${branch}" already exists or conflicts with an existing branch. Choose a new name.`,
+        `Branch "${branch}" conflicts with an existing branch path. Choose a different name.`,
       );
+    const kind = refs.split('\n').includes(`refs/heads/${branch}`)
+      ? 'local'
+      : names.includes(branch)
+        ? 'remote'
+        : undefined;
+    if (kind) {
+      const worktrees = await this.git(['worktree', 'list', '--porcelain', '-z'], path);
+      if (worktrees.split('\0').includes(`branch refs/heads/${branch}`))
+        throw new Error(
+          `Branch "${branch}" is already checked out in another worktree. Release that worktree or choose a different branch.`,
+        );
+      if (!allowExisting)
+        throw Object.assign(
+          new Error(
+            `Branch "${branch}" already exists ${kind === 'local' ? 'locally' : 'on origin'}. Confirm continuing from its current commit instead of the repository base branch.`,
+          ),
+          { code: 'BRANCH_CONFIRMATION_REQUIRED' },
+        );
+    }
+    return kind;
   }
   async inspect(input: RepoInput): Promise<{ path: string; baseBranch: string; remote: string }> {
     const path = await realpath(input.path);
@@ -109,12 +129,24 @@ export class GitService {
     }
     if (!exists) {
       await this.git(['fetch', 'origin'], p.config.path);
-      await this.validateNewBranch(p.branch, p.config.path);
-      const base = await this.git(
-        ['rev-parse', '--verify', `refs/remotes/origin/${p.config.baseBranch}^{commit}`],
-        p.config.path,
-      );
-      await this.git(['worktree', 'add', '-b', p.branch, p.worktree, base], p.config.path);
+      const existing = await this.validateNewBranch(p.branch, p.config.path, !!p.reuseBranch);
+      if (p.reuseBranch && existing !== p.reuseBranch)
+        throw new Error(
+          'The existing branch changed or disappeared. Create a new project to confirm its current source.',
+        );
+      if (existing === 'local') {
+        await this.git(['worktree', 'add', p.worktree, p.branch], p.config.path);
+      } else {
+        const base = await this.git(
+          [
+            'rev-parse',
+            '--verify',
+            `refs/remotes/origin/${existing === 'remote' ? p.branch : p.config.baseBranch}^{commit}`,
+          ],
+          p.config.path,
+        );
+        await this.git(['worktree', 'add', '-b', p.branch, p.worktree, base], p.config.path);
+      }
     }
     await this.assertWorktree(p);
     for (const file of p.config.copyFiles) {
@@ -273,7 +305,7 @@ export class GitService {
       '--head',
       p.branch,
       '--state',
-      'all',
+      'open',
       '--json',
       'url',
     ];

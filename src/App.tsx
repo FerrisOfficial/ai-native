@@ -820,6 +820,12 @@ function NewProject({
   const [taskSource, setTaskSource] = useState<'url' | 'description'>('url');
   const [taskDescription, setTaskDescription] = useState('');
   const [branch, setBranch] = useState('');
+  const [branchConfirmation, setBranchConfirmation] = useState<{
+    key: string;
+    confirmed: boolean;
+  }>();
+  const branchKey = `${repoId}\0${branch.trim()}`;
+  const confirmBranch = branchConfirmation?.key === branchKey;
   const [budget, setBudget] = useState('');
   const [choices, setChoices] = useState(initialRepository?.choices ?? defaultChoices()),
     [error, setError] = useState(''),
@@ -844,6 +850,7 @@ function NewProject({
               repoId,
               name,
               branch,
+              reuseExistingBranch: confirmBranch && branchConfirmation.confirmed,
               taskSource,
               ...(taskSource === 'url' ? { ticketUrl } : { taskDescription }),
               choices,
@@ -851,6 +858,9 @@ function NewProject({
             });
             close();
           } catch (error) {
+            if ((error as { code?: string }).code === 'BRANCH_CONFIRMATION_REQUIRED') {
+              setBranchConfirmation({ key: branchKey, confirmed: false });
+            }
             setError(errorMessage(error));
           } finally {
             setBusy(false);
@@ -864,6 +874,7 @@ function NewProject({
               value={repoId}
               onChange={(e) => {
                 setRepoId(e.target.value);
+                setBranchConfirmation(undefined);
                 setChoices(repositories.find((r) => r.id === e.target.value)!.choices);
               }}
             >
@@ -886,15 +897,34 @@ function NewProject({
           </Field>
           <Field
             label="Working branch"
-            hint={`A new branch for this project, based on ${repositories.find((r) => r.id === repoId)?.baseBranch || "the repository's default branch"}. Leave empty to generate a unique name automatically.`}
+            hint={`New branches start from ${repositories.find((r) => r.id === repoId)?.baseBranch || "the repository's default branch"}. Existing branches require confirmation to continue their history. Leave empty to generate a unique name.`}
           >
             <input
               maxLength={200}
               value={branch}
-              onChange={(e) => setBranch(e.target.value)}
+              onChange={(e) => {
+                setBranch(e.target.value);
+                setBranchConfirmation(undefined);
+              }}
               placeholder="feature/team-invitations"
             />
           </Field>
+          {confirmBranch && (
+            <div className="notice">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={branchConfirmation.confirmed}
+                  onChange={(e) =>
+                    setBranchConfirmation({ key: branchKey, confirmed: e.target.checked })
+                  }
+                />
+                Continue on existing branch <strong>{branch.trim()}</strong>. Use its current commit
+                (local branch if available), preserving previous work, instead of starting from the
+                repository base branch.
+              </label>
+            </div>
+          )}
           <Field label="Task source">
             <select
               value={taskSource}
@@ -969,7 +999,11 @@ function NewProject({
         </div>
         <footer>
           <Button onClick={close}>Cancel</Button>
-          <Button type="submit" primary disabled={busy}>
+          <Button
+            type="submit"
+            primary
+            disabled={busy || (confirmBranch && !branchConfirmation.confirmed)}
+          >
             {busy ? <LoaderCircle className="spin" size={16} /> : <ArrowRight size={16} />} Create &
             start
           </Button>

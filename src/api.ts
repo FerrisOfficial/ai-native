@@ -16,6 +16,7 @@ export async function api<T>(
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const result = await response.json();
-  if (!response.ok) throw new Error(result.error ?? 'Request failed');
+  if (!response.ok)
+    throw Object.assign(new Error(result.error ?? 'Request failed'), { code: result.code });
   return result;
 }

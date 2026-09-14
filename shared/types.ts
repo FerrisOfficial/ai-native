@@ -94,6 +94,7 @@ export type Project = {
   status: Status;
   stage: Stage;
   branch: string;
+  reuseBranch?: 'local' | 'remote';
   worktree: string;
   baseCommit?: string;
   port: number;
