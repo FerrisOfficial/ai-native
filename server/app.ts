@@ -12,7 +12,7 @@ import { ClaudeDriver } from './claude.js';
 import { run } from './process.js';
 import { availableSkills } from './skills.js';
 import { detectRepository } from './detect.js';
-import { savedCommands } from './permissions.js';
+import { savedCommands, rememberCommand } from './permissions.js';
 import type { CommandPermission } from '../shared/types.js';
 import { budgetSchema } from '../shared/types.js';
 
@@ -151,6 +151,20 @@ export async function createApp(
   app.get<{ Params: { id: string } }>('/api/repositories/:id/permissions', async (request) =>
     savedCommands(workflow.store, request.params.id),
   );
+  app.post<{ Params: { id: string } }>('/api/repositories/:id/permissions', async (request) => {
+    const { tool, prefix } = z
+      .object({ tool: z.enum(['Bash', 'PowerShell']), prefix: z.string().trim().min(1).max(500) })
+      .parse(request.body);
+    const permission = rememberCommand(
+      workflow.store,
+      { repoId: request.params.id },
+      tool,
+      { command: prefix },
+      prefix,
+    );
+    workflow.agent.refreshPermissions?.(request.params.id);
+    return permission;
+  });
   app.delete<{ Params: { id: string; permissionId: string } }>(
     '/api/repositories/:id/permissions/:permissionId',
     async (request) => {
@@ -262,7 +276,8 @@ export async function createApp(
         .object({
           allow: z.boolean().optional(),
           remember: z.boolean().optional(),
-          commandPrefix: z.string().trim().min(1).max(200).optional(),
+          commandPrefix: z.string().trim().min(1).max(500).optional(),
+          commandPrefixes: z.array(z.string().trim().min(1).max(500)).min(1).max(50).optional(),
           answers: z.record(z.string(), z.string()).optional(),
         })
         .parse(request.body),

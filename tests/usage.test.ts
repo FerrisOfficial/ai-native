@@ -306,3 +306,111 @@ it('saves prefix approvals from questions and applies them across arguments with
     store.close();
   }
 });
+
+it('batch approval unblocks concurrent matching questions, validates all rules before saving and keeps other repos pending', async () => {
+  const store = await fixture();
+  try {
+    const { savedCommands } = await import('../server/permissions.js');
+    const p = { ...project, repoId: 'batch' };
+    const other = { ...p, id: 'other', repoId: 'other' };
+    store.put('repositories', { id: 'batch' });
+    store.put('repositories', { id: 'other' });
+    store.put('projects', p);
+    store.put('projects', other);
+    const driver = new ClaudeDriver(store);
+    const control = new AbortController();
+    const session = { id: 's', projectId: p.id, stage: 'plan' as const, createdAt: '' };
+    const one = driver.permission(
+      p,
+      session,
+      'Bash',
+      { command: 'grep first file && git status' },
+      control.signal,
+    );
+    const first = store.all<{ id: string }>('questions').at(-1)!.id;
+    const two = driver.permission(
+      p,
+      session,
+      'Bash',
+      { command: 'grep second file | git status --short' },
+      control.signal,
+    );
+    const third = driver.permission(
+      other,
+      { ...session, projectId: other.id },
+      'Bash',
+      { command: 'grep first file' },
+      control.signal,
+    );
+    expect(() =>
+      driver.answer(first, { allow: true, remember: true, commandPrefixes: ['grep', 'rm'] }),
+    ).toThrow('prefix');
+    expect(savedCommands(store, p.repoId)).toHaveLength(0);
+    driver.answer(first, { allow: true, remember: true, commandPrefixes: ['grep', 'git status'] });
+    expect((await one).behavior).toBe('allow');
+    expect((await two).behavior).toBe('allow');
+    expect(driver.pending.size).toBe(1);
+    expect(store.events(p.id).some((e) => e.kind === 'command_permission_used')).toBe(true);
+    control.abort();
+    expect((await third).behavior).toBe('deny');
+    expect(driver.pending.size).toBe(0);
+    expect(
+      (
+        await driver.permission(
+          p,
+          session,
+          'Bash',
+          { command: 'git -C repo push' },
+          new AbortController().signal,
+        )
+      ).behavior,
+    ).toBe('deny');
+    expect(
+      (
+        await driver.permission(
+          p,
+          session,
+          'Write',
+          { file_path: 'x' },
+          new AbortController().signal,
+        )
+      ).behavior,
+    ).toBe('deny');
+  } finally {
+    store.close();
+  }
+});
+
+it('retains legacy exact rules and new prefixes after restart, including revocation', async () => {
+  const { rememberCommand, findCommand, commandSignature } =
+    await import('../server/permissions.js');
+  const root = await mkdtemp(resolve('.data/tests/permission-restart-'));
+  const file = join(root, 'state.sqlite');
+  let store = new Store(file);
+  const p = { repoId: 'restart' };
+  try {
+    store.put('repositories', { id: p.repoId });
+    const input = { command: 'echo legacy' };
+    store.put('command_permissions', {
+      id: 'legacy',
+      repoId: p.repoId,
+      tool: 'Bash',
+      input,
+      signature: commandSignature('Bash', input),
+      createdAt: '',
+    });
+    const rule = rememberCommand(store, p, 'Bash', { command: 'grep x' }, 'grep');
+    store.close();
+    store = new Store(file);
+    expect(findCommand(store, p, 'Bash', { command: 'echo legacy', timeout: 42 })?.id).toBe(
+      'legacy',
+    );
+    expect(findCommand(store, p, 'Bash', { command: 'grep y' })?.id).toBe(rule.id);
+    store.put('command_permissions', { ...rule, revokedAt: new Date().toISOString() });
+    store.close();
+    store = new Store(file);
+    expect(findCommand(store, p, 'Bash', { command: 'grep y' })).toBeUndefined();
+  } finally {
+    store.close();
+  }
+});

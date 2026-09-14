@@ -138,6 +138,9 @@ class FixtureAgent implements AgentDriver {
     };
   }
   async interrupt() {}
+  refreshPermissions(repoId: string) {
+    this.permissions.refreshPermissions(repoId);
+  }
   answer(id: string, answer: { allow?: boolean; answers?: Record<string, string> }) {
     this.permissions.answer(id, answer);
   }

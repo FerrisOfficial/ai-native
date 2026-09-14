@@ -12,7 +12,12 @@ import type { AgentStage, Project, Question, Session, Run } from '../shared/type
 import { Store } from './store.js';
 import { bundledSkillName } from './skills.js';
 import { projectRuns, remainingBudget } from './usage.js';
-import { findCommand, rememberCommand } from './permissions.js';
+import {
+  analyzeCommand,
+  matchesCommandWords,
+  normalizeCommandPrefix,
+} from '../shared/command-permissions.js';
+import { findCommand, rememberCommand, commandRestriction } from './permissions.js';
 
 export const planResult = z.object({
   ticketAccessible: z.boolean(),
@@ -44,12 +49,14 @@ export interface AgentRequest {
 export interface AgentDriver {
   execute(request: AgentRequest): Promise<unknown>;
   interrupt(projectId: string): Promise<void>;
+  refreshPermissions?(repoId: string): void;
   answer(
     questionId: string,
     answer: {
       allow?: boolean;
       remember?: boolean;
       commandPrefix?: string;
+      commandPrefixes?: string[];
       answers?: Record<string, string>;
     },
   ): void;
@@ -70,11 +77,15 @@ export class ClaudeDriver implements AgentDriver {
     signal: AbortSignal,
   ): Promise<PermissionResult> {
     if (signal.aborted) return { behavior: 'deny', message: 'Session interrupted' };
+    const restriction = commandRestriction(tool, input);
+    if (restriction) return { behavior: 'deny', message: restriction };
+    if (session.stage !== 'implementation' && /^(Edit|Write|NotebookEdit)$/.test(tool))
+      return { behavior: 'deny', message: 'This stage is read-only' };
     const saved = findCommand(this.store, project, tool, input);
     if (saved) {
       this.store.event(
         'command_permission_used',
-        { permissionId: saved.id, tool, input },
+        { permissionId: saved.id, permissionIds: saved.matchedPermissionIds, tool, input },
         project.id,
       );
       return { behavior: 'allow', updatedInput: input };
@@ -111,6 +122,7 @@ export class ClaudeDriver implements AgentDriver {
       allow?: boolean;
       remember?: boolean;
       commandPrefix?: string;
+      commandPrefixes?: string[];
       answers?: Record<string, string>;
     },
   ) {
@@ -118,7 +130,10 @@ export class ClaudeDriver implements AgentDriver {
       resolve = this.pending.get(id);
     if (!question || question.status !== 'pending' || !resolve)
       throw new Error('This question is no longer pending; resume the interrupted session');
-    if (answer.commandPrefix !== undefined && !answer.remember)
+    if (
+      (answer.commandPrefix !== undefined || answer.commandPrefixes !== undefined) &&
+      !answer.remember
+    )
       throw new Error('A command prefix requires a remembered approval');
     if (answer.remember && (question.kind !== 'permission' || answer.allow !== true))
       throw new Error('Only allowed commands can be remembered');
@@ -132,7 +147,26 @@ export class ClaudeDriver implements AgentDriver {
       if (answer.remember) {
         const project = this.store.get<Project>('projects', question.projectId);
         if (!project) throw new Error('Project not found');
-        rememberCommand(this.store, project, question.tool, question.input, answer.commandPrefix);
+        const prefixes =
+          answer.commandPrefixes ??
+          (answer.commandPrefix === undefined ? undefined : [answer.commandPrefix]);
+        if (prefixes) {
+          const analysis = analyzeCommand(String(question.input.command ?? ''), question.tool);
+          if (
+            !prefixes.length ||
+            analysis.reason ||
+            prefixes.some(
+              (prefix) =>
+                !normalizeCommandPrefix(prefix, question.tool) ||
+                !analysis.commands.some((words) =>
+                  matchesCommandWords(words, prefix, question.tool),
+                ),
+            )
+          )
+            throw new Error(analysis.reason ?? 'Each prefix must match a recognized command.');
+          for (const prefix of prefixes)
+            rememberCommand(this.store, project, question.tool, question.input, prefix);
+        } else rememberCommand(this.store, project, question.tool, question.input);
       }
       resolve(
         answer.allow
@@ -147,6 +181,30 @@ export class ClaudeDriver implements AgentDriver {
     this.pending.delete(id);
     this.store.put('questions', { ...question, status: 'answered', answer });
     this.store.event('question_answered', { id, answer }, question.projectId);
+    if (answer.remember) {
+      const project = this.store.get<Project>('projects', question.projectId);
+      if (project) this.refreshPermissions(project.repoId);
+    }
+  }
+  refreshPermissions(repoId: string) {
+    for (const question of this.store.all<Question>('questions')) {
+      if (
+        question.status !== 'pending' ||
+        question.kind !== 'permission' ||
+        !this.pending.has(question.id)
+      )
+        continue;
+      const project = this.store.get<Project>('projects', question.projectId);
+      if (!project || project.repoId !== repoId) continue;
+      const saved = findCommand(this.store, project, question.tool, question.input);
+      if (!saved) continue;
+      this.store.event(
+        'command_permission_used',
+        { permissionIds: saved.matchedPermissionIds, tool: question.tool, input: question.input },
+        project.id,
+      );
+      this.answer(question.id, { allow: true });
+    }
   }
   async execute({ project, stage, prompt, signal, fresh }: AgentRequest) {
     const maxBudgetUsd = remainingBudget(projectRuns(this.store, project.id), project.budgetUsd);
@@ -222,12 +280,7 @@ export class ClaudeDriver implements AgentDriver {
                   if (input.hook_event_name !== 'PreToolUse') return {};
                   const name = input.tool_name;
                   const payload = input.tool_input as Record<string, unknown>;
-                  const command = String(payload.command ?? '');
-                  if (
-                    /\b(git\s+(commit|push|checkout|switch|reset|clean|worktree)|gh\s+pr\s+(create|merge))\b/i.test(
-                      command,
-                    )
-                  )
+                  if (commandRestriction(name, payload))
                     return {
                       hookSpecificOutput: {
                         hookEventName: 'PreToolUse',
@@ -248,7 +301,12 @@ export class ClaudeDriver implements AgentDriver {
                   if (saved) {
                     this.store.event(
                       'command_permission_used',
-                      { permissionId: saved.id, tool: name, input: payload },
+                      {
+                        permissionId: saved.id,
+                        permissionIds: saved.matchedPermissionIds,
+                        tool: name,
+                        input: payload,
+                      },
                       project.id,
                     );
                     return {

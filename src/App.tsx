@@ -1,4 +1,9 @@
-import { simpleCommandTokens, matchesCommandPrefix } from '../shared/command-permissions';
+import {
+  analyzeCommand,
+  matchesCommandWords,
+  normalizeCommandPrefix,
+  suggestedCommandPrefixes,
+} from '../shared/command-permissions';
 import type { CommandPermission } from '../shared/types';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
@@ -288,6 +293,9 @@ function ChoicesFields({
 }
 
 function RepositoryPermissions({ repoId }: { repoId: string }) {
+  const [newPrefix, setNewPrefix] = useState('');
+  const [newTool, setNewTool] = useState('Bash');
+  const [filter, setFilter] = useState('');
   const [permissions, setPermissions] = useState<CommandPermission[]>([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -298,64 +306,154 @@ function RepositoryPermissions({ repoId }: { repoId: string }) {
   }, [repoId]);
   return (
     <section className="panel">
-      <h3>Saved command permissions</h3>
+      <div className="row">
+        <h3>Saved command permissions</h3>
+        <Button
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setError('');
+            try {
+              setPermissions(
+                await api<CommandPermission[]>('/repositories/' + repoId + '/permissions'),
+              );
+            } catch (e) {
+              setError(errorMessage(e));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          Refresh permissions
+        </Button>
+      </div>
       <p className="muted">
         Approvals apply to this repository’s projects. Exact approvals match one invocation. Command
-        prefixes allow any arguments after the listed command (for example grep or npm test).
-        Compound shell syntax still prompts. Workflow restrictions still apply. Revoking affects
+        prefixes allow any arguments after the listed command (for example grep or npm test). Every
+        command in a chain must be approved. Workflow restrictions still apply. Revoking affects
         future calls.
       </p>
+      <div className="row">
+        <Field label="Shell tool">
+          <select value={newTool} onChange={(e) => setNewTool(e.target.value)}>
+            <option>Bash</option>
+            <option>PowerShell</option>
+          </select>
+        </Field>
+        <Field label="New command prefix">
+          <input
+            placeholder="grep or git status"
+            value={newPrefix}
+            onChange={(e) => setNewPrefix(e.target.value)}
+          />
+        </Field>
+        <Button
+          disabled={busy || !normalizeCommandPrefix(newPrefix, newTool)}
+          onClick={async () => {
+            setBusy(true);
+            setError('');
+            try {
+              const permission = await api<CommandPermission>(
+                '/repositories/' + repoId + '/permissions',
+                { tool: newTool, prefix: newPrefix },
+              );
+              setPermissions((current) => [
+                ...current.filter((p) => p.id !== permission.id),
+                permission,
+              ]);
+              setNewPrefix('');
+            } catch (e) {
+              setError(errorMessage(e));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          Add permission
+        </Button>
+      </div>
+      <p className="muted">
+        A prefix permits all following arguments. Prefer git status over git, or npm test over npm,
+        when that covers your workflow.
+      </p>
+      {newPrefix && !normalizeCommandPrefix(newPrefix, newTool) && (
+        <p className="notice">
+          {analyzeCommand(newPrefix, newTool).reason ??
+            'Enter one command prefix, without a pipeline or chain.'}
+        </p>
+      )}
+      <Field label="Search permissions">
+        <input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Filter saved commands"
+        />
+      </Field>
       {permissions.length === 0 && <p className="muted">No saved permissions.</p>}
-      {permissions.map((permission) => (
-        <div key={permission.id}>
-          <strong>
-            {permission.tool} ·{' '}
-            {permission.scope === 'prefix' ? 'Command prefix · any arguments' : 'Exact invocation'}
-          </strong>
-          <pre>
-            {permission.scope === 'prefix'
-              ? permission.prefix + ' …'
-              : JSON.stringify(permission.input, null, 2)}
-          </pre>
-          {permission.scope === 'prefix' && (
-            <details>
-              <summary>Execution options</summary>
-              <pre>
-                {JSON.stringify(
-                  Object.fromEntries(
-                    Object.entries(permission.input).filter(
-                      ([key]) => !['command', 'description', 'timeout'].includes(key),
+      {permissions.length > 0 &&
+        !permissions.some((p) =>
+          (p.tool + ' ' + (p.prefix ?? JSON.stringify(p.input)))
+            .toLowerCase()
+            .includes(filter.toLowerCase()),
+        ) && <p className="muted">No permissions match your search.</p>}
+      {permissions
+        .filter((p) =>
+          (p.tool + ' ' + (p.prefix ?? JSON.stringify(p.input)))
+            .toLowerCase()
+            .includes(filter.toLowerCase()),
+        )
+        .map((permission) => (
+          <div key={permission.id}>
+            <strong>
+              {permission.tool} ·{' '}
+              {permission.scope === 'prefix'
+                ? 'Command prefix · any arguments'
+                : 'Exact invocation'}
+            </strong>
+            <pre>
+              {permission.scope === 'prefix'
+                ? permission.prefix + ' …'
+                : JSON.stringify(permission.input, null, 2)}
+            </pre>
+            {permission.scope === 'prefix' && (
+              <details>
+                <summary>Execution options</summary>
+                <pre>
+                  {JSON.stringify(
+                    Object.fromEntries(
+                      Object.entries(permission.input).filter(
+                        ([key]) => !['command', 'description', 'timeout'].includes(key),
+                      ),
                     ),
-                  ),
-                  null,
-                  2,
-                )}
-              </pre>
-            </details>
-          )}
-          <Button
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              setError('');
-              try {
-                await api(
-                  '/repositories/' + repoId + '/permissions/' + permission.id,
-                  {},
-                  'DELETE',
-                );
-                setPermissions((current) => current.filter((p) => p.id !== permission.id));
-              } catch (e) {
-                setError(String(e));
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            <Trash2 size={14} /> Revoke permission
-          </Button>
-        </div>
-      ))}
+                    null,
+                    2,
+                  )}
+                </pre>
+              </details>
+            )}
+            <Button
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                setError('');
+                try {
+                  await api(
+                    '/repositories/' + repoId + '/permissions/' + permission.id,
+                    {},
+                    'DELETE',
+                  );
+                  setPermissions((current) => current.filter((p) => p.id !== permission.id));
+                } catch (e) {
+                  setError(String(e));
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              <Trash2 size={14} /> Revoke permission
+            </Button>
+          </div>
+        ))}
       {error && <p className="notice error">{error}</p>}
     </section>
   );
@@ -827,11 +925,26 @@ function QuestionCard({
   const [answers, setAnswers] = useState<Record<string, string>>({}),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
-  const [permissionScope, setPermissionScope] = useState<'exact' | 'prefix'>('exact');
-  const [commandPrefix, setCommandPrefix] = useState(
-    simpleCommandTokens(String(question.input.command ?? ''))?.[0] ?? '',
+  const analysis = analyzeCommand(String(question.input.command ?? ''), question.tool);
+  const suggestions = suggestedCommandPrefixes(String(question.input.command ?? ''), question.tool);
+  const [permissionScope, setPermissionScope] = useState<'exact' | 'prefix'>(
+    suggestions.length ? 'prefix' : 'exact',
   );
-  const prefixValid = matchesCommandPrefix(String(question.input.command ?? ''), commandPrefix);
+  const [commandPrefix, setCommandPrefix] = useState(
+    suggestedCommandPrefixes(String(question.input.command ?? ''), question.tool).join('\n'),
+  );
+  const prefixes = commandPrefix
+    .split(/\r?\n/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const prefixValid =
+    !analysis.reason &&
+    prefixes.length > 0 &&
+    prefixes.every(
+      (prefix) =>
+        normalizeCommandPrefix(prefix, question.tool) &&
+        analysis.commands.some((words) => matchesCommandWords(words, prefix, question.tool)),
+    );
   const questions = (question.input.questions ?? []) as {
     question: string;
     header?: string;
@@ -840,6 +953,7 @@ function QuestionCard({
   }[];
   const submit = async (body: unknown) => {
     setBusy(true);
+    setError('');
     try {
       await answer(question.id, body);
     } catch (e) {
@@ -863,33 +977,60 @@ function QuestionCard({
           {['Bash', 'PowerShell'].includes(question.tool) &&
             typeof question.input.command === 'string' && (
               <>
+                {analysis.reason && (
+                  <p className="notice">
+                    {analysis.reason} You can still choose Allow once or save this exact invocation.
+                  </p>
+                )}
                 <Field label="Repository approval scope">
                   <select
                     value={permissionScope}
                     onChange={(e) => setPermissionScope(e.target.value as 'exact' | 'prefix')}
                   >
                     <option value="exact">This exact invocation</option>
-                    <option value="prefix">Command prefix — any arguments</option>
+                    <option value="prefix" disabled={!!analysis.reason}>
+                      Command prefixes — any arguments
+                    </option>
                   </select>
                 </Field>
                 {permissionScope === 'prefix' && (
                   <>
-                    <Field label="Allowed command prefix">
-                      <input
+                    <Field label="Allowed command prefixes (one per line)">
+                      <textarea
                         value={commandPrefix}
-                        placeholder="grep or npm test"
+                        placeholder={'grep\nnpm test'}
                         onChange={(e) => setCommandPrefix(e.target.value)}
                       />
                     </Field>
                     <p className="muted">
-                      Allows any arguments after this prefix in this repository. Use a subcommand
-                      such as npm test to narrow the scope. Compound commands, redirections and
-                      shell expansions still prompt.
+                      Save the listed prefixes for this repository and allow the current invocation.
+                      Each prefix allows any following arguments. Remove lines you only want to
+                      allow once. Future pipelines and command chains run automatically only when
+                      every command has a matching rule.
                     </p>
+                    {suggestions.length > 0 && (
+                      <div className="row">
+                        {suggestions.map((prefix) => (
+                          <Button
+                            key={prefix}
+                            disabled={busy}
+                            onClick={() =>
+                              setCommandPrefix((current) =>
+                                [
+                                  ...new Set([...current.split(/\r?\n/).filter(Boolean), prefix]),
+                                ].join('\n'),
+                              )
+                            }
+                          >
+                            + {prefix}
+                          </Button>
+                        ))}
+                      </div>
+                    )}
                     {!prefixValid && (
                       <p className="notice">
-                        Enter the command name or initial words of this simple invocation. Complex
-                        shell syntax requires an exact approval.
+                        {analysis.reason ??
+                          'Each line must match the start of one of the commands shown above. Use the suggestions below or choose an exact approval.'}
                       </p>
                     )}
                   </>
@@ -911,7 +1052,7 @@ function QuestionCard({
                     submit({
                       allow: true,
                       remember: true,
-                      ...(permissionScope === 'prefix' ? { commandPrefix } : {}),
+                      ...(permissionScope === 'prefix' ? { commandPrefixes: prefixes } : {}),
                     })
                   }
                   disabled={busy || (permissionScope === 'prefix' && !prefixValid)}
@@ -1585,6 +1726,7 @@ export default function App() {
                                 'message',
                                 'tool',
                                 'tool_result',
+                                'command_permission_used',
                                 'command_start',
                                 'command_output',
                                 'command_end',
@@ -1624,6 +1766,16 @@ export default function App() {
                                     <CodeXml size={14} />
                                     {data.name}
                                     <span>Tool call</span>
+                                  </summary>
+                                  <pre>{JSON.stringify(data.input, null, 2)}</pre>
+                                </details>
+                              );
+                            if (e.kind === 'command_permission_used')
+                              return (
+                                <details className="tool-message" key={e.seq}>
+                                  <summary>
+                                    <ShieldCheck size={14} /> Automatically allowed by repository
+                                    permissions
                                   </summary>
                                   <pre>{JSON.stringify(data.input, null, 2)}</pre>
                                 </details>

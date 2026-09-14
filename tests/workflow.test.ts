@@ -574,3 +574,73 @@ describe('Local API and user input', () => {
     expect(() => f.git.localPath(f.repo, 'C:\outside.txt')).toThrow('Unsafe');
   }, 60000);
 });
+
+it('adds, lists and revokes repository prefixes through authenticated API', async () => {
+  const f = await fixture();
+  const app = await createApp(f.w);
+  cleanups.push(async () => {
+    await app.close();
+  });
+  const headers = { host: '127.0.0.1:4317' };
+  const { token } = (await app.inject({ url: '/api/bootstrap', headers })).json();
+  const auth = { ...headers, 'x-session-token': token };
+  const url = '/api/repositories/' + f.repository.id + '/permissions';
+  expect(
+    (await app.inject({ url, method: 'POST', headers, payload: { tool: 'Bash', prefix: 'grep' } }))
+      .statusCode,
+  ).toBe(401);
+  const added = await app.inject({
+    url,
+    method: 'POST',
+    headers: auth,
+    payload: { tool: 'Bash', prefix: 'grep' },
+  });
+  expect(added.statusCode).toBe(200);
+  const permission = added.json();
+  expect(permission).toMatchObject({ scope: 'prefix', prefix: 'grep' });
+  expect(
+    (
+      await app.inject({
+        url,
+        method: 'POST',
+        headers: auth,
+        payload: { tool: 'Bash', prefix: 'grep' },
+      })
+    ).json().id,
+  ).toBe(permission.id);
+  expect((await app.inject({ url, headers: auth })).json()).toHaveLength(1);
+  expect(
+    (
+      await app.inject({
+        url,
+        method: 'POST',
+        headers: auth,
+        payload: { tool: 'Bash', prefix: 'grep; whoami' },
+      })
+    ).statusCode,
+  ).toBeGreaterThanOrEqual(400);
+  expect(
+    (
+      await app.inject({
+        url,
+        method: 'POST',
+        headers: auth,
+        payload: { tool: 'Bash', prefix: 'git push' },
+      })
+    ).statusCode,
+  ).toBeGreaterThanOrEqual(400);
+  expect(
+    (
+      await app.inject({
+        url: '/api/repositories/wrong/permissions/' + permission.id,
+        method: 'DELETE',
+        headers: auth,
+      })
+    ).statusCode,
+  ).toBeGreaterThanOrEqual(400);
+  expect(
+    (await app.inject({ url: url + '/' + permission.id, method: 'DELETE', headers: auth }))
+      .statusCode,
+  ).toBe(200);
+  expect((await app.inject({ url, headers: auth })).json()).toEqual([]);
+}, 60000);
