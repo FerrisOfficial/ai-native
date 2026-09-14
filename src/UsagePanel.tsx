@@ -56,11 +56,13 @@ export function UsagePanel({
       <h3>Cost & time</h3>
       <div className="usage-totals">
         <div>
-          <strong>{dollars(cost)}</strong>
+          <strong>{unknown && !detail.runs.some((r) => r.usage) ? '—' : dollars(cost)}</strong>
           <small>Reported estimated cost{unknown ? ' · incomplete' : ''}</small>
         </div>
         <div>
-          <strong>{tokens.toLocaleString()}</strong>
+          <strong>
+            {unknown && !detail.runs.some((r) => r.usage) ? '—' : tokens.toLocaleString()}
+          </strong>
           <small>Reported tokens, including cache</small>
         </div>
         <div>
@@ -105,7 +107,7 @@ export function UsagePanel({
                       : ['prepare', 'test', 'publish'].includes(r.stage)
                         ? 'N/A'
                         : r.status === 'running'
-                          ? 'Pending'
+                          ? 'Waiting for Claude report'
                           : 'Unavailable'}
                 </td>
               </tr>

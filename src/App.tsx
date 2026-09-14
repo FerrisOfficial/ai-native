@@ -1,3 +1,4 @@
+import type { CommandPermission } from '../shared/types';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowDown,
@@ -282,6 +283,56 @@ function ChoicesFields({
         ))}
       </datalist>
     </div>
+  );
+}
+
+function RepositoryPermissions({ repoId }: { repoId: string }) {
+  const [permissions, setPermissions] = useState<CommandPermission[]>([]);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api<CommandPermission[]>('/repositories/' + repoId + '/permissions')
+      .then(setPermissions)
+      .catch((e) => setError(String(e)));
+  }, [repoId]);
+  return (
+    <section className="panel">
+      <h3>Saved command permissions</h3>
+      <p className="muted">
+        Approvals apply to this repository’s projects. Commands and execution options must match
+        exactly; descriptions are ignored. Workflow restrictions still apply. Revoking affects
+        future calls.
+      </p>
+      {permissions.length === 0 && <p className="muted">No saved permissions.</p>}
+      {permissions.map((permission) => (
+        <div key={permission.id}>
+          <strong>{permission.tool}</strong>
+          <pre>{JSON.stringify(permission.input, null, 2)}</pre>
+          <Button
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError('');
+              try {
+                await api(
+                  '/repositories/' + repoId + '/permissions/' + permission.id,
+                  {},
+                  'DELETE',
+                );
+                setPermissions((current) => current.filter((p) => p.id !== permission.id));
+              } catch (e) {
+                setError(String(e));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            <Trash2 size={14} /> Revoke permission
+          </Button>
+        </div>
+      ))}
+      {error && <p className="notice error">{error}</p>}
+    </section>
   );
 }
 
@@ -596,6 +647,7 @@ function RepositoryForm({
               </Field>
             </div>
           ))}
+          {initial && <RepositoryPermissions repoId={initial.id} />}
           {error && <div className="notice error">{error}</div>}
         </div>
         <footer>
@@ -785,6 +837,13 @@ function QuestionCard({
             <Button onClick={() => submit({ allow: true })} disabled={busy} primary>
               Allow once
             </Button>
+            {['Bash', 'PowerShell'].includes(question.tool) &&
+              typeof question.input.command === 'string' &&
+              question.input.command.trim() && (
+                <Button onClick={() => submit({ allow: true, remember: true })} disabled={busy}>
+                  Allow for this repository
+                </Button>
+              )}
           </div>
         </>
       ) : (

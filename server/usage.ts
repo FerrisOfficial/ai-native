@@ -10,11 +10,11 @@ export function projectRuns(store: Store, projectId: string): Run[] {
     )
     .all(projectId);
   return runs.map((run) => {
-    if (run.usage || run.usageExpected !== undefined) return run;
+    if (run.usage || run.usageExpected === false) return run;
     const event = events.find((e) => {
       const data = JSON.parse(e.data as string);
       return (
-        data.stage === run.stage &&
+        (data.runId ? data.runId === run.id : data.stage === run.stage) &&
         (e.createdAt as string) >= run.startedAt &&
         (e.createdAt as string) <= (run.finishedAt ?? '9999') &&
         typeof data.estimatedCost === 'number'
@@ -22,14 +22,19 @@ export function projectRuns(store: Store, projectId: string): Run[] {
     });
     if (!event) return run;
     const data = JSON.parse(event.data as string);
+    const models = Object.values(data.modelUsage ?? {}) as Record<string, number>[];
+    const tokens = (modelKey: string, legacyKey: string) =>
+      models.length
+        ? models.reduce((sum, model) => sum + (model[modelKey] ?? 0), 0)
+        : (data.usage?.[legacyKey] ?? 0);
     return {
       ...run,
       usage: {
         costUsd: data.estimatedCost,
-        inputTokens: data.usage?.input_tokens ?? 0,
-        outputTokens: data.usage?.output_tokens ?? 0,
-        cacheReadTokens: data.usage?.cache_read_input_tokens ?? 0,
-        cacheWriteTokens: data.usage?.cache_creation_input_tokens ?? 0,
+        inputTokens: tokens('inputTokens', 'input_tokens'),
+        outputTokens: tokens('outputTokens', 'output_tokens'),
+        cacheReadTokens: tokens('cacheReadInputTokens', 'cache_read_input_tokens'),
+        cacheWriteTokens: tokens('cacheCreationInputTokens', 'cache_creation_input_tokens'),
         apiDurationMs: data.apiDurationMs ?? 0,
       },
     };

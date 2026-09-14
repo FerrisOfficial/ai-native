@@ -105,3 +105,9 @@ The initial Claude probe encountered expired OAuth; a later real-repository run 
 - `tests/` and `scripts/`: deterministic tests and explicit integration probes.
 
 V1 does not clone repositories, edit workflow graphs or skills, merge PRs, integrate CI, support WSL, or register itself as a Windows startup service.
+
+### Saved command permissions
+
+Shell permission prompts offer **Deny**, **Allow once**, and **Allow for this repository**. Repository approvals persist locally across restarts and apply to projects of that repository. The tool, exact command, and execution options must match (the display description is ignored). Review and revoke approvals under **Repositories → repository settings → Saved command permissions**. Revocation affects future calls; workflow lifecycle restrictions still apply.
+
+Claude costs and tokens appear in **Overview → Cost & time** after each SDK call finishes, including reported error results. While waiting for the first report, unavailable totals show a dash rather than zero. Interrupted calls without a report remain unavailable; totals may be incomplete. These are SDK estimates, not subscription billing charges.

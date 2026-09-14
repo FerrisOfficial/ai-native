@@ -12,6 +12,7 @@ const tables = [
   'terminals',
   'questions',
   'approvals',
+  'command_permissions',
 ] as const;
 type Table = (typeof tables)[number];
 export class Store {

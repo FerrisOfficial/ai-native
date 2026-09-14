@@ -189,3 +189,13 @@ export type ProjectDetail = {
   questions: Question[];
   events: WorkflowEvent[];
 };
+
+export interface CommandPermission {
+  id: string;
+  repoId: string;
+  tool: string;
+  input: Record<string, unknown>;
+  signature: string;
+  createdAt: string;
+  revokedAt?: string;
+}

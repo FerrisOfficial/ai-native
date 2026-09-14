@@ -149,3 +149,77 @@ it('blocks zero budgets and unknown costs, and counts error results and legacy h
     store.close();
   }
 });
+
+it('recovers a report with a run id and whole-tree tokens even when usageExpected is true', async () => {
+  const store = await fixture();
+  try {
+    store.put('runs', { ...run('recover'), usageExpected: true });
+    store.event(
+      'agent_result',
+      {
+        runId: 'recover',
+        stage: 'plan',
+        estimatedCost: 2,
+        usage: result.usage,
+        modelUsage: result.modelUsage,
+        apiDurationMs: 500,
+      },
+      project.id,
+    );
+    expect(projectRuns(store, project.id)[0].usage).toEqual(usage);
+  } finally {
+    store.close();
+  }
+});
+it('remembers exact commands per repo, supports revocation, and keeps lifecycle guards', async () => {
+  const store = await fixture();
+  try {
+    const { savedCommands, findCommand } = await import('../server/permissions.js');
+    const p = { ...project, repoId: 'repo', budgetUsd: null };
+    store.put('projects', p);
+    store.put('repositories', { id: 'repo' });
+    const driver = new ClaudeDriver(store);
+    const session = { id: 's', projectId: p.id, stage: 'plan' as const, createdAt: '' };
+    const signal = new AbortController().signal;
+    const input = { command: 'npm test', description: 'Test' };
+    const pending = driver.permission(p, session, 'Bash', input, signal);
+    const question = store.all<{ id: string }>('questions').at(-1)!;
+    driver.answer(question.id, { allow: true, remember: true });
+    expect((await pending).behavior).toBe('allow');
+    expect(savedCommands(store, 'repo')).toHaveLength(1);
+    expect(
+      (await driver.permission(p, session, 'Bash', { ...input, description: 'Again' }, signal))
+        .behavior,
+    ).toBe('allow');
+    expect(findCommand(store, { ...p, repoId: 'other' }, 'Bash', input)).toBeUndefined();
+    expect(findCommand(store, p, 'Bash', { command: 'npm test && echo extra' })).toBeUndefined();
+    expect(findCommand(store, p, 'Bash', { ...input, run_in_background: true })).toBeUndefined();
+    mock.messages = [result];
+    await driver.execute({ project: p, stage: 'plan', prompt: 'test', signal });
+    const hook = mock.query.mock.calls.at(-1)![0].options.hooks.PreToolUse[0].hooks[0];
+    expect(
+      (await hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: input }))
+        .hookSpecificOutput.permissionDecision,
+    ).toBe('allow');
+    expect(
+      (
+        await hook({
+          hook_event_name: 'PreToolUse',
+          tool_name: 'Bash',
+          tool_input: { command: 'git push' },
+        })
+      ).hookSpecificOutput.permissionDecision,
+    ).toBe('deny');
+    const permission = savedCommands(store, 'repo')[0];
+    store.put('command_permissions', { ...permission, revokedAt: new Date().toISOString() });
+    expect(findCommand(store, p, 'Bash', input)).toBeUndefined();
+    for (const allow of [false, true]) {
+      const next = driver.permission(p, session, 'Bash', input, signal);
+      driver.answer(store.all<{ id: string }>('questions').at(-1)!.id, { allow });
+      expect((await next).behavior).toBe(allow ? 'allow' : 'deny');
+      expect(savedCommands(store, 'repo')).toHaveLength(0);
+    }
+  } finally {
+    store.close();
+  }
+});

@@ -12,6 +12,8 @@ import { ClaudeDriver } from './claude.js';
 import { run } from './process.js';
 import { availableSkills } from './skills.js';
 import { detectRepository } from './detect.js';
+import { savedCommands } from './permissions.js';
+import type { CommandPermission } from '../shared/types.js';
 import { budgetSchema } from '../shared/types.js';
 
 export async function createApp(
@@ -146,6 +148,29 @@ export async function createApp(
       stream.close();
     }
   });
+  app.get<{ Params: { id: string } }>('/api/repositories/:id/permissions', async (request) =>
+    savedCommands(workflow.store, request.params.id),
+  );
+  app.delete<{ Params: { id: string; permissionId: string } }>(
+    '/api/repositories/:id/permissions/:permissionId',
+    async (request) => {
+      const permission = workflow.store.get<CommandPermission>(
+        'command_permissions',
+        request.params.permissionId,
+      );
+      if (!permission || permission.repoId !== request.params.id)
+        throw new Error('Permission not found');
+      workflow.store.put('command_permissions', {
+        ...permission,
+        revokedAt: new Date().toISOString(),
+      });
+      workflow.store.event('command_permission_revoked', {
+        id: permission.id,
+        repoId: permission.repoId,
+      });
+      return { ok: true };
+    },
+  );
   app.post('/api/repositories', async (request) => workflow.repository(request.body));
   app.delete<{ Params: { id: string } }>('/api/repositories/:id', async (request) => {
     workflow.removeRepository(request.params.id);
@@ -236,6 +261,7 @@ export async function createApp(
       z
         .object({
           allow: z.boolean().optional(),
+          remember: z.boolean().optional(),
           answers: z.record(z.string(), z.string()).optional(),
         })
         .parse(request.body),

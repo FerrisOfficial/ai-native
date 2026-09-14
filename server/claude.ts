@@ -12,6 +12,7 @@ import type { AgentStage, Project, Question, Session, Run } from '../shared/type
 import { Store } from './store.js';
 import { bundledSkillName } from './skills.js';
 import { projectRuns, remainingBudget } from './usage.js';
+import { findCommand, rememberCommand } from './permissions.js';
 
 export const planResult = z.object({
   ticketAccessible: z.boolean(),
@@ -43,7 +44,10 @@ export interface AgentRequest {
 export interface AgentDriver {
   execute(request: AgentRequest): Promise<unknown>;
   interrupt(projectId: string): Promise<void>;
-  answer(questionId: string, answer: { allow?: boolean; answers?: Record<string, string> }): void;
+  answer(
+    questionId: string,
+    answer: { allow?: boolean; remember?: boolean; answers?: Record<string, string> },
+  ): void;
 }
 export class ClaudeDriver implements AgentDriver {
   active = new Map<string, Query>();
@@ -61,6 +65,15 @@ export class ClaudeDriver implements AgentDriver {
     signal: AbortSignal,
   ): Promise<PermissionResult> {
     if (signal.aborted) return { behavior: 'deny', message: 'Session interrupted' };
+    const saved = findCommand(this.store, project, tool, input);
+    if (saved) {
+      this.store.event(
+        'command_permission_used',
+        { permissionId: saved.id, tool, input },
+        project.id,
+      );
+      return { behavior: 'allow', updatedInput: input };
+    }
     const question: Question = {
       id: randomUUID(),
       projectId: project.id,
@@ -87,11 +100,16 @@ export class ClaudeDriver implements AgentDriver {
       signal.addEventListener('abort', cancel, { once: true });
     });
   }
-  answer(id: string, answer: { allow?: boolean; answers?: Record<string, string> }) {
+  answer(
+    id: string,
+    answer: { allow?: boolean; remember?: boolean; answers?: Record<string, string> },
+  ) {
     const question = this.store.get<Question>('questions', id),
       resolve = this.pending.get(id);
     if (!question || question.status !== 'pending' || !resolve)
       throw new Error('This question is no longer pending; resume the interrupted session');
+    if (answer.remember && (question.kind !== 'permission' || answer.allow !== true))
+      throw new Error('Only allowed commands can be remembered');
     if (question.kind === 'question') {
       const questions = question.input.questions as { question: string }[];
       if (!questions?.every((q) => answer.answers?.[q.question]?.trim()))
@@ -99,6 +117,11 @@ export class ClaudeDriver implements AgentDriver {
       resolve({ behavior: 'allow', updatedInput: { ...question.input, answers: answer.answers } });
     } else {
       if (typeof answer.allow !== 'boolean') throw new Error('Choose Allow or Deny');
+      if (answer.remember) {
+        const project = this.store.get<Project>('projects', question.projectId);
+        if (!project) throw new Error('Project not found');
+        rememberCommand(this.store, project, question.tool, question.input);
+      }
       resolve(
         answer.allow
           ? { behavior: 'allow', updatedInput: question.input }
@@ -209,6 +232,21 @@ export class ClaudeDriver implements AgentDriver {
                         permissionDecisionReason: 'This stage is read-only',
                       },
                     };
+                  const saved = findCommand(this.store, project, name, payload);
+                  if (saved) {
+                    this.store.event(
+                      'command_permission_used',
+                      { permissionId: saved.id, tool: name, input: payload },
+                      project.id,
+                    );
+                    return {
+                      hookSpecificOutput: {
+                        hookEventName: 'PreToolUse',
+                        permissionDecision: 'allow',
+                        permissionDecisionReason: 'Exact command approved for this repository',
+                      },
+                    };
+                  }
                   if (readOnly && /^(Bash|PowerShell)$/.test(name))
                     return {
                       hookSpecificOutput: {
@@ -345,6 +383,7 @@ export class ClaudeDriver implements AgentDriver {
         {
           stage: session.stage,
           subtype: message.subtype,
+          runId: run?.id,
           ...(costKnown ? { estimatedCost: message.total_cost_usd } : {}),
           usage: message.usage,
           modelUsage: message.modelUsage,
