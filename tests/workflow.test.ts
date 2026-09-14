@@ -401,6 +401,39 @@ describe('Workflow lifecycle with real Git and deterministic Claude', () => {
 });
 
 describe('Local API and user input', () => {
+  it('removes a repository without deleting files or breaking its existing projects', async () => {
+    const f = await fixture();
+    const p = await f.create();
+    await settled(f.w, p.id, 'awaiting_plan');
+    const app = await createApp(f.w);
+    cleanups.push(async () => {
+      await app.close();
+    });
+    const headers = { host: '127.0.0.1:4317' };
+    const { token } = (await app.inject({ url: '/api/bootstrap', headers })).json();
+    const url = `/api/repositories/${f.repository.id}`;
+    expect((await app.inject({ url, method: 'DELETE', headers })).statusCode).toBe(401);
+    const auth = { ...headers, 'x-session-token': token };
+    expect((await app.inject({ url, method: 'DELETE', headers: auth })).statusCode).toBe(200);
+    expect((await app.inject({ url, method: 'DELETE', headers: auth })).statusCode).toBe(200);
+    expect((await f.w.snapshot()).repositories).toHaveLength(0);
+    expect(
+      f.store.get<{ removedAt: string }>('repositories', f.repository.id)?.removedAt,
+    ).toBeTruthy();
+    await expect(f.create()).rejects.toThrow('Repository not found');
+    await expect(f.w.repository(f.repository, f.repository.id)).rejects.toThrow(
+      'Repository not found',
+    );
+    expect(await readFile(join(f.repo, 'README.md'), 'utf8')).toBe('Fixture repository\n');
+    expect(f.w.detail(p.id).sessions).toBeDefined();
+    await access(join(p.worktree, 'README.md'));
+    f.w.approvePlan(p.id);
+    await settled(f.w, p.id, 'awaiting_result');
+    const readded = await f.w.repository(f.repository);
+    expect(readded.id).not.toBe(f.repository.id);
+    expect((await f.w.snapshot()).repositories).toHaveLength(1);
+    expect(f.w.detail(p.id).project.repoId).toBe(f.repository.id);
+  }, 60000);
   it('requires a session token and rejects foreign origins and Host headers', async () => {
     const f = await fixture();
     const app = await createApp(f.w);

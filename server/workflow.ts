@@ -80,7 +80,7 @@ export class Workflow {
     const input = repoSchema.parse(raw);
     const inspected = await this.git.inspect(input);
     const old = id ? this.store.get<Repository>('repositories', id) : undefined;
-    if (id && !old) throw new Error('Repository not found');
+    if (id && (!old || old.removedAt)) throw new Error('Repository not found');
     const repository = this.store.put('repositories', {
       ...input,
       ...inspected,
@@ -89,6 +89,13 @@ export class Workflow {
     });
     this.store.event('repositories_changed', { id: repository.id });
     return repository;
+  }
+  removeRepository(id: string) {
+    const repository = this.store.get<Repository>('repositories', id);
+    if (!repository) throw new Error('Repository not found');
+    if (repository.removedAt) return;
+    this.store.put('repositories', { ...repository, removedAt: new Date().toISOString() });
+    this.store.event('repositories_changed', { id });
   }
   async allocatePort() {
     let start = this.store.setting('nextPort', 5100);
@@ -112,7 +119,7 @@ export class Workflow {
   async create(raw: unknown) {
     const input = projectInput.parse(raw);
     const repository = this.store.get<Repository>('repositories', input.repoId);
-    if (!repository) throw new Error('Repository not found');
+    if (!repository || repository.removedAt) throw new Error('Repository not found');
     const id = randomUUID(),
       choices = input.choices ?? repository.choices;
     const skillRoot = join(this.dataRoot, 'projects', id, 'plugin');
@@ -141,6 +148,8 @@ export class Workflow {
       port: await this.allocatePort(),
       round: 0,
     };
+    if (this.store.get<Repository>('repositories', repository.id)?.removedAt)
+      throw new Error('Repository was removed while creating the project');
     this.save(p);
     this.enqueue(id);
     return this.get(id);
@@ -462,7 +471,7 @@ export class Workflow {
   }
   async snapshot() {
     return {
-      repositories: this.store.all<Repository>('repositories'),
+      repositories: this.store.all<Repository>('repositories').filter((r) => !r.removedAt),
       projects: this.store.all<Project>('projects'),
       skills: await scanSkills(this.skillsRoot),
       concurrency: this.store.setting('concurrency', 2),

@@ -68,6 +68,8 @@ Claude login checks cannot prove an OAuth refresh will succeed. If a stage repor
 
 ## Persistence and publication
 
+In **Repositories**, use the trash button to remove a repository from the application and the new-project selector. Confirm the repository name/path in the dialog. Local files, worktrees and existing projects are retained; running projects continue with their saved configuration. Removed repositories with historical projects remain available in the board filter. You can add the same local repository again later. Pause/archive projects separately when you want to stop their processes.
+
 The default data directory is `%LOCALAPPDATA%\ai-native-workflow`. It contains SQLite, project skill snapshots, and managed worktrees. `AI_NATIVE_DATA` overrides this directory; `CLAUDE_EXECUTABLE` overrides the Claude binary path; `PORT` overrides the web server port. The Claude executable defaults to `%USERPROFILE%\.local\bin\claude.exe`.
 
 Closing a tab does not stop the engine. A normal shutdown stops agents and terminal processes. After restarting, queued/running stages and terminals are marked interrupted. Use **Resume** for the workflow and **Restart** for a terminal. Historical records remain available; an interrupted terminal becomes a new process, not a resurrected shell.

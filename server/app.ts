@@ -147,6 +147,10 @@ export async function createApp(
     }
   });
   app.post('/api/repositories', async (request) => workflow.repository(request.body));
+  app.delete<{ Params: { id: string } }>('/api/repositories/:id', async (request) => {
+    workflow.removeRepository(request.params.id);
+    return { ok: true };
+  });
   app.post('/api/skills/discover', async (request) => {
     const { path } = z.object({ path: z.string().min(1) }).parse(request.body);
     await workflow.git.git(['rev-parse', '--show-toplevel'], path);

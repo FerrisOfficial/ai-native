@@ -48,7 +48,12 @@ export type RepoSuggestion = {
   terminals: z.infer<typeof terminalSpecSchema>[];
 };
 export const budgetSchema = z.number().finite().min(0).max(1000000).nullable();
-export type Repository = RepoInput & { id: string; createdAt: string; remote: string };
+export type Repository = RepoInput & {
+  id: string;
+  createdAt: string;
+  remote: string;
+  removedAt?: string;
+};
 export type Choices = z.infer<typeof choicesSchema>;
 export type Skill = {
   source?: 'application' | 'repository';

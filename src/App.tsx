@@ -853,6 +853,7 @@ export default function App() {
   const [repoModal, setRepoModal] = useState<Repository | 'new'>(),
     [projectModal, setProjectModal] = useState(false),
     [busy, setBusy] = useState(false);
+  const [removeRepo, setRemoveRepo] = useState<Repository>();
   const [feedback, setFeedback] = useState(''),
     [selectedItems, setSelectedItems] = useState<string[]>([]),
     [terminalId, setTerminalId] = useState<string>(),
@@ -1926,6 +1927,17 @@ export default function App() {
                             {r.name}
                           </option>
                         ))}
+                        {[
+                          ...new Map(
+                            snapshot.projects
+                              .filter((p) => !snapshot.repositories.some((r) => r.id === p.repoId))
+                              .map((p) => [p.repoId, p.config]),
+                          ).values(),
+                        ].map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.name} (removed)
+                          </option>
+                        ))}
                       </select>
                     </div>
                   </div>
@@ -2087,6 +2099,18 @@ export default function App() {
                           }}
                         >
                           <Settings2 size={17} />
+                        </button>
+                        <button
+                          className="icon-button"
+                          disabled={busy}
+                          aria-label={`Remove repository ${r.name}`}
+                          title="Remove repository from this app"
+                          onClick={() => {
+                            setError('');
+                            setRemoveRepo(r);
+                          }}
+                        >
+                          <Trash2 size={17} />
                         </button>
                       </div>
                       <p className="path">{r.path}</p>
@@ -2274,6 +2298,42 @@ export default function App() {
           )}
         </main>
       </div>
+      {removeRepo && (
+        <Modal title="Remove repository?" close={() => !busy && setRemoveRepo(undefined)}>
+          <div className="modal-body">
+            <p>
+              Remove <strong>{removeRepo.name}</strong> from the repository list and new-project
+              selector?
+            </p>
+            <p className="path">{removeRepo.path}</p>
+            <p>
+              Local files and worktrees stay on disk. Existing projects, conversations and terminals
+              remain available and continue using their saved configuration.
+            </p>
+            <p className="muted">
+              You can add this repository again later. To stop a project, pause or archive it
+              separately.
+            </p>
+            {error && <div className="notice error">{error}</div>}
+          </div>
+          <footer>
+            <Button disabled={busy} onClick={() => setRemoveRepo(undefined)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={busy}
+              onClick={() =>
+                perform(async () => {
+                  await api(`/repositories/${removeRepo.id}`, {}, 'DELETE');
+                  setRemoveRepo(undefined);
+                })
+              }
+            >
+              <Trash2 size={15} /> Remove repository
+            </Button>
+          </footer>
+        </Modal>
+      )}
       {repoModal && (
         <RepositoryForm
           initial={repoModal === 'new' ? undefined : repoModal}
