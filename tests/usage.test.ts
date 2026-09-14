@@ -57,7 +57,24 @@ it.each(['plan', 'implementation', 'review'] as const)(
       const options = mock.query.mock.calls.at(-1)![0].options;
       expect(options.permissionMode).toBe('bypassPermissions');
       expect(options.allowDangerouslySkipPermissions).toBe(true);
-      expect(options.canUseTool).toBeUndefined();
+      expect(options.canUseTool).toBeTypeOf('function');
+      // Claude settings can require approval even in bypassPermissions mode.
+      // Simulate those requests reaching the SDK callback, not the PreToolUse hook.
+      const signal = new AbortController().signal;
+      for (const command of [
+        "gh api graphql -f query='query { viewer { login } }'",
+        'gh api repos/owner/repo/pulls/40/comments --paginate 2>&1 | head -300',
+      ]) {
+        const input = { command };
+        expect(await options.canUseTool('Bash', input, { signal })).toEqual({
+          behavior: 'allow',
+          updatedInput: input,
+        });
+      }
+      expect(await options.canUseTool('Bash', { command: 'git push' }, { signal })).toMatchObject({
+        behavior: 'deny',
+      });
+      expect(store.all('questions')).toHaveLength(0);
       expect(options.disallowedTools.includes('AskUserQuestion')).toBe(stage !== 'plan');
       const hook = options.hooks.PreToolUse[0].hooks[0];
       const check = async (name: string, input: Record<string, unknown> = {}) =>

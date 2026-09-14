@@ -2169,13 +2169,22 @@ export default function App() {
                               );
                             if (e.kind === 'tool_result')
                               return (
-                                <div
-                                  className={`tool-status ${data.error ? 'error-text' : ''}`}
-                                  key={e.seq}
-                                >
-                                  {data.error ? <CircleAlert size={12} /> : <Check size={12} />}Tool{' '}
-                                  {data.error ? 'reported an error' : 'completed'}
-                                </div>
+                                <details className="tool-message" key={e.seq}>
+                                  <summary className={data.error ? 'error-text' : undefined}>
+                                    {data.error ? <CircleAlert size={12} /> : <Check size={12} />}
+                                    Tool {data.error ? 'reported an error' : 'completed'}
+                                    <span>Show output</span>
+                                  </summary>
+                                  <pre>
+                                    {typeof data.content === 'string'
+                                      ? data.content
+                                      : JSON.stringify(
+                                          data.content ?? 'No output recorded.',
+                                          null,
+                                          2,
+                                        )}
+                                  </pre>
+                                </details>
                               );
                             if (e.kind === 'command_output')
                               return (

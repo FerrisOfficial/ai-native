@@ -387,10 +387,10 @@ export class ClaudeDriver implements AgentDriver {
             },
           ],
         },
-        canUseTool: autoApprove
-          ? undefined
-          : (tool, input, options) =>
-              this.permission(project, currentSession, tool, input, options.signal),
+        // Explicit ask rules can still reach this callback in bypassPermissions mode.
+        // Keep the host's decision handler available instead of silently denying them.
+        canUseTool: (tool, input, options) =>
+          this.permission(project, currentSession, tool, input, options.signal),
         stderr: (text) => this.store.event('diagnostic', { stage, text }, project.id),
       },
     });
