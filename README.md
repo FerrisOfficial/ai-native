@@ -25,7 +25,7 @@ For development, run `npm run dev` and `npm run dev:ui` in separate terminals, t
 
 ## First project
 
-1. Add your skills to `skills/<skill-id>/SKILL.md`. See [the skill format](skills/README.md). Open **Skills → Refresh skills**. No example skill is silently selected for real work.
+1. Open **Skills → Refresh skills**. For a first trial, use the included `example-plan`, `example-implement`, and `example-review` skills for their respective stages. You can also add your own skills to `skills/<skill-id>/SKILL.md`. See [the skill format and trial instructions](skills/README.md). No example skill is silently selected for real work.
 2. In **Repositories**, add an existing local repository root. Set a base branch or leave it empty to detect the default from `origin`.
 3. Choose a skill and model for **Plan**, **Implement**, and **Review**. Model discovery is best effort; you can type any alias or full model ID supported by your Claude installation. `default` inherits your Claude model.
 4. Set optional PowerShell setup and test commands, local files to copy, and named terminals.
