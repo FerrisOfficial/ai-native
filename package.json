@@ -7,7 +7,7 @@
     "dev": "tsx server/index.ts",
     "dev:ui": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
-    "start": "tsx server/index.ts",
+    "start": "node scripts/start.mjs",
     "test": "vitest run",
     "check": "tsc --noEmit",
     "probe:claude": "tsx scripts/probe-claude.ts",

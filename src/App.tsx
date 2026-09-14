@@ -56,6 +56,8 @@ import type {
 } from '../shared/types';
 import { api, bootstrap } from './api';
 import { UsagePanel } from './UsagePanel';
+import { CopyWorktree } from './CopyWorktree';
+import { UpdatePanel } from './UpdatePanel';
 import { needsInput } from './project-attention';
 import { taskDescriptionLimit } from '../shared/task-source';
 import { parseHash, buildHash, type Page, type Tab, type Route } from './route';
@@ -2003,7 +2005,7 @@ export default function App() {
                             {p!.branch}
                           </p>
                           <label>Worktree</label>
-                          <p className="path">{p!.worktree}</p>
+                          <CopyWorktree key={p!.worktree} path={p!.worktree} />
                           <label>Port range</label>
                           <p>
                             {p!.port}–{p!.port + 9}
@@ -2894,6 +2896,7 @@ export default function App() {
               )}
               {page === 'settings' && (
                 <div className="settings-layout">
+                  <UpdatePanel />
                   <section className="panel">
                     <div className="row">
                       <WorkflowIcon size={20} />

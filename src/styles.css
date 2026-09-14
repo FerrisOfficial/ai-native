@@ -2351,3 +2351,42 @@ main {
 .detection-preview code {
   overflow-wrap: anywhere;
 }
+
+.worktree-copy {
+  margin: 6px 0 16px;
+}
+.settings-layout .update-heading {
+  justify-content: flex-start;
+}
+.worktree-copy-button {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.worktree-copy-button:hover {
+  background: var(--purple-light);
+}
+.worktree-copy-button .path {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.worktree-copy-button svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.worktree-copy small {
+  display: block;
+  color: var(--muted);
+  min-height: 18px;
+  margin-top: 5px;
+}

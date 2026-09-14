@@ -1,5 +1,14 @@
 import { z } from 'zod';
 
+export type UpdateState = {
+  id?: string;
+  status: 'idle' | 'checking' | 'installing' | 'restarting' | 'updated' | 'current' | 'error';
+  message: string;
+  revision?: string;
+  log?: string;
+  offline?: boolean;
+};
+
 export const stages = ['plan', 'implementation', 'review'] as const;
 export type AgentStage = (typeof stages)[number];
 export type Stage = 'prepare' | AgentStage | 'test' | 'publish';

@@ -95,6 +95,29 @@ preserve the current view. Invalid links return to the board with an explanation
 
 ## Persistence and publication
 
+### Application updates
+
+Start the application with `npm.cmd start` to enable **Settings → Application updates → Update
+from GitHub**. The launcher checks the default branch of `FerrisOfficial/ai-native`, fetches its
+latest commit, applies a fast-forward update, runs `npm ci` and `npm run build`, then restarts the
+server. A progress page remains available during installation and returns to Settings on success.
+The first installation of this feature requires restarting with `npm.cmd start`; directly running
+`tsx server/index.ts` (including `npm run dev`) does not enable the updater.
+
+Pause running/queued projects and stop project terminals before updating. The application
+checkout must be on the GitHub default branch with no local modifications, untracked files or
+unpublished commits. The updater reports these conditions instead of discarding work. Project
+history and worktrees stay in their existing data directory. Updates use the existing Git
+authentication; the app does not change GitHub credentials or publish local changes.
+
+If dependency installation, build or restart fails, the progress page shows the error and the
+application directory. Details are retained in `application-update.log` there. Stop the launcher,
+resolve the reported issue, then run `npm.cmd ci`, `npm.cmd run build` and `npm.cmd start` in that
+directory. The updater does not automatically roll back source or database changes.
+
+In **Overview → Workspace**, click the worktree path or its copy icon to copy the full path to
+the clipboard. A confirmation appears after the copy succeeds.
+
 In **Repositories**, use the trash button to remove a repository from the application and the new-project selector. Confirm the repository name/path in the dialog. Local files, worktrees and existing projects are retained; running projects continue with their saved configuration. Removed repositories with historical projects remain available in the board filter. You can add the same local repository again later. Pause/archive projects separately when you want to stop their processes.
 
 The default data directory is `%LOCALAPPDATA%\ai-native-workflow`. It contains SQLite, project skill snapshots, and managed worktrees. `AI_NATIVE_DATA` overrides this directory; `CLAUDE_EXECUTABLE` overrides the Claude binary path; `PORT` overrides the web server port. The Claude executable defaults to `%USERPROFILE%\.local\bin\claude.exe`.

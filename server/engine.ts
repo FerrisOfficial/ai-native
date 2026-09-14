@@ -7,6 +7,7 @@ import { ClaudeDriver } from './claude.js';
 import { Terminals } from './terminals.js';
 import { Workflow } from './workflow.js';
 import { createApp } from './app.js';
+import type { AppUpdater } from './updater.js';
 
 export async function startEngine(options: {
   dataRoot: string;
@@ -14,6 +15,7 @@ export async function startEngine(options: {
   worktreesRoot?: string;
   skillsRoot?: string;
   uiDir?: string;
+  updater?: AppUpdater;
 }) {
   await mkdir(options.dataRoot, { recursive: true });
   // Preserve configured paths in existing project snapshots, while locking the
@@ -58,7 +60,11 @@ export async function startEngine(options: {
       undefined,
       { deferRecovery: true },
     );
-    app = await createApp(workflow, { port: options.port, uiDir: options.uiDir });
+    app = await createApp(workflow, {
+      port: options.port,
+      uiDir: options.uiDir,
+      updater: options.updater,
+    });
     let ready = false;
     app.addHook('onRequest', async (_request, reply) => {
       if (!ready) return reply.code(503).send({ error: 'The local engine is starting.' });

@@ -15,12 +15,16 @@ import { detectRepository } from './detect.js';
 import { savedCommands, rememberCommand } from './permissions.js';
 import type { CommandPermission } from '../shared/types.js';
 import { budgetSchema } from '../shared/types.js';
+import { AppUpdater } from './updater.js';
+import { maintenancePage } from '../scripts/update-runtime.mjs';
 
 export async function createApp(
   workflow: Workflow,
-  options: { port?: number; uiDir?: string; allowedOrigins?: string[] } = {},
+  options: { port?: number; uiDir?: string; allowedOrigins?: string[]; updater?: AppUpdater } = {},
 ) {
   const app = Fastify({ logger: false, bodyLimit: 1_048_576 });
+  const updater = options.updater ?? new AppUpdater();
+  const mutations = new Set<string>();
   const token = randomBytes(32).toString('hex');
   const port = options.port ?? 4317;
   const cookieName = `ai_native_session_${port}`;
@@ -61,7 +65,17 @@ export async function createApp(
       .header('X-Content-Type-Options', 'nosniff')
       .header('Referrer-Policy', 'no-referrer')
       .header('X-Frame-Options', 'DENY');
+    if (request.url.startsWith('/api/') && !['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
+      if (updater.busy) return reply.code(409).send({ error: 'Application update in progress.' });
+      mutations.add(request.id);
+    }
     if (request.url.startsWith('/api/')) reply.header('Cache-Control', 'no-store');
+  });
+  app.addHook('onResponse', async (request) => {
+    mutations.delete(request.id);
+  });
+  app.addHook('onRequestAbort', async (request) => {
+    mutations.delete(request.id);
   });
   app.setErrorHandler((error, _request, reply) => {
     reply.code(error instanceof z.ZodError ? 400 : 409).send({
@@ -81,6 +95,32 @@ export async function createApp(
   });
   app.get('/api/snapshot', async () => workflow.snapshot());
   app.get('/api/health', async () => ({ status: 'ok' }));
+  app.get('/api/app-update', async () => ({ ...updater.state, available: updater.available }));
+  app.post('/api/app-update', async () => {
+    if (mutations.size > 1)
+      throw new Error('Wait for the current operation to finish before updating.');
+    const snapshot = await workflow.snapshot();
+    if (snapshot.active || snapshot.projects.some((p) => ['running', 'queued'].includes(p.status)))
+      throw new Error('Pause running and queued projects before updating the application.');
+    if (workflow.terminals.active.size)
+      throw new Error('Stop running project terminals before updating the application.');
+    // A request may have started while the snapshot was loading.
+    if (mutations.size > 1)
+      throw new Error('Wait for the current operation to finish before updating.');
+    const id = updater.start();
+    return { url: `/update-status?key=${id}` };
+  });
+  app.get<{ Querystring: { key?: string; json?: string } }>(
+    '/update-status',
+    async (request, reply) => {
+      if (!updater.state.id || request.query.key !== updater.state.id)
+        return reply.code(404).send({ error: 'Update session not found.' });
+      reply.header('Cache-Control', 'no-store');
+      return request.query.json !== undefined
+        ? updater.state
+        : reply.type('text/html; charset=utf-8').send(maintenancePage());
+    },
+  );
   app.get('/api/diagnostics', async () => {
     const checks = await Promise.allSettled([
       run('git', ['--version'], process.cwd()),
@@ -339,6 +379,8 @@ export async function createApp(
     workflow.store.bus.on('live', live);
     socket.on('message', (bytes: Buffer) => {
       try {
+        if (updater.busy)
+          throw new Error('Terminal input is paused during the application update.');
         const input = z
           .discriminatedUnion('type', [
             z.object({
