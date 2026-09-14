@@ -32,6 +32,7 @@ export const projectInput = z
     taskSource: z.enum(['url', 'description']).default('url'),
     ticketUrl: z.string().trim().max(4000).optional(),
     taskDescription: z.string().trim().max(taskDescriptionLimit).optional(),
+    taskNote: z.string().trim().max(taskDescriptionLimit).optional(),
     repoId: z.string(),
     choices: choicesSchema.optional(),
   })
@@ -173,7 +174,7 @@ export class Workflow {
       taskSource: input.taskSource,
       ...(input.taskSource === 'description'
         ? { taskDescription: input.taskDescription }
-        : { ticketUrl: input.ticketUrl }),
+        : { ticketUrl: input.ticketUrl, ...(input.taskNote ? { taskNote: input.taskNote } : {}) }),
       config: repository,
       choices,
       status: 'new',

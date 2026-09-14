@@ -58,7 +58,7 @@ The source repository needs an `origin` remote and an initial commit. New branch
 
 ## Workflow and permissions
 
-In repository settings, **Claude permissions → Auto approve implementation & review** enables Claude's `bypassPermissions` mode for those two stages in new projects. Planning keeps interactive clarification and manual plan approval. Implementation, review, and correction rounds then run without tool permission prompts or questions; unresolved issues are reported in the result. The application still waits for the user's review and explicit publication approval. Review retains its read-only instructions and edit-tool restrictions; lifecycle commands remain controlled by the host. This setting is off by default and is copied into each new project's configuration.
+In repository settings, **Claude permissions → Auto approve tools in all stages** enables Claude's `bypassPermissions` mode for tool operations, including planning commands. Planning questions explicitly route to the user, and the completed plan still requires manual approval. Implementation, review, and correction rounds run without tool permission prompts or questions; unresolved issues are reported in the result. The application still waits for the user's review and explicit publication approval. Planning and review retain their read-only instructions and edit-tool restrictions; lifecycle commands remain controlled by the host. This setting is off by default and is copied into each new project's configuration. Projects already created with auto approve enabled also use automatic planning commands on their next Claude invocation.
 
 ### Suggested repository configuration
 

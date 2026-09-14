@@ -22,7 +22,7 @@ beforeEach(() => {
 });
 
 it.each(['plan', 'implementation', 'review'] as const)(
-  'applies repository auto approve only after planning: %s',
+  'auto approves tools in every stage while keeping planning questions interactive: %s',
   async (stage) => {
     const store = await fixture();
     try {
@@ -55,18 +55,50 @@ it.each(['plan', 'implementation', 'review'] as const)(
         signal: new AbortController().signal,
       });
       const options = mock.query.mock.calls.at(-1)![0].options;
-      expect(options.permissionMode).toBe(stage === 'plan' ? 'plan' : 'bypassPermissions');
-      expect(options.allowDangerouslySkipPermissions).toBe(stage !== 'plan');
+      expect(options.permissionMode).toBe('bypassPermissions');
+      expect(options.allowDangerouslySkipPermissions).toBe(true);
+      expect(options.canUseTool).toBeUndefined();
       expect(options.disallowedTools.includes('AskUserQuestion')).toBe(stage !== 'plan');
       const hook = options.hooks.PreToolUse[0].hooks[0];
       const check = async (name: string, input: Record<string, unknown> = {}) =>
         (await hook({ hook_event_name: 'PreToolUse', tool_name: name, tool_input: input }))
           .hookSpecificOutput?.permissionDecision;
-      expect(await check('Bash', { command: 'npm test' })).toBe(stage === 'plan' ? 'ask' : 'allow');
+      expect(await check('Bash', { command: 'npm test' })).toBe('allow');
+      expect(await check('PowerShell', { command: 'Get-ChildItem' })).toBe('allow');
+      if (stage === 'plan') {
+        const pending = hook({
+          hook_event_name: 'PreToolUse',
+          tool_name: 'AskUserQuestion',
+          tool_input: { questions: [{ question: 'Which behavior?' }] },
+        });
+        const question = store.all<{ id: string }>('questions').at(-1)!;
+        expect(question).toBeDefined();
+        driver.answer(question.id, { answers: { 'Which behavior?': 'Keep existing behavior' } });
+        const response = await pending;
+        expect(response.hookSpecificOutput.permissionDecision).toBe('allow');
+        expect(response.hookSpecificOutput.updatedInput.answers).toEqual({
+          'Which behavior?': 'Keep existing behavior',
+        });
+      } else expect(await check('AskUserQuestion', { questions: [] })).toBe('deny');
+      expect(options.systemPrompt.append).toContain(
+        stage === 'plan' ? 'Use AskUserQuestion' : 'Work autonomously',
+      );
       expect(await check('Bash', { command: 'git push' })).toBe('deny');
-      if (stage === 'review')
+      if (stage !== 'implementation')
         expect(await check('Write', { file_path: 'a.txt', content: 'test' })).toBe('deny');
       const controller = new AbortController();
+      expect(
+        (
+          await driver.permission(
+            p,
+            { id: 'session', projectId: p.id, stage, createdAt: '' },
+            'Bash',
+            { command: 'npm test' },
+            controller.signal,
+          )
+        ).behavior,
+      ).toBe('allow');
+      expect(store.all('questions')).toHaveLength(stage === 'plan' ? 1 : 0);
       const answer = driver.permission(
         p,
         { id: 'session', projectId: p.id, stage, createdAt: '' },
@@ -75,7 +107,7 @@ it.each(['plan', 'implementation', 'review'] as const)(
         controller.signal,
       );
       if (stage === 'plan') {
-        expect(store.all('questions')).toHaveLength(1);
+        expect(store.all('questions')).toHaveLength(2);
         controller.abort();
       } else {
         expect(store.all('questions')).toHaveLength(0);

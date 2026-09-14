@@ -288,6 +288,102 @@ nav button.active {
   width: calc(100% - 226px);
   min-width: 0;
 }
+.repo-title-link {
+  color: inherit;
+  text-decoration: none;
+}
+.repo-title-link:hover {
+  color: var(--purple);
+}
+.repo-settings.panel {
+  padding: 0;
+  overflow: hidden;
+}
+.repo-settings > form {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+}
+.repo-settings-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 22px 14px;
+  background: #faf9fc;
+  border-right: 1px solid var(--border);
+}
+.repo-settings-tabs button {
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  text-align: left;
+  padding: 12px 14px;
+  font-weight: 550;
+  color: #696b78;
+}
+.repo-settings-tabs button.active {
+  color: var(--purple);
+  background: var(--purple-light);
+}
+.repo-settings-tabs button:hover {
+  background: var(--purple-light);
+}
+.repo-settings .modal-body {
+  padding: 28px;
+  min-width: 0;
+  min-height: 370px;
+}
+.repo-settings-section {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.repo-settings-section[hidden] {
+  display: none;
+}
+.repo-settings .repo-settings-section > .section-heading:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.repo-section-heading {
+  margin-bottom: 24px;
+}
+.repo-section-heading h2 {
+  margin: 0 0 8px;
+  font-size: 19px;
+}
+.repo-section-heading p {
+  color: var(--muted);
+  font-size: 13px;
+}
+.repo-settings > form > footer {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px 28px;
+  border-top: 1px solid var(--border);
+  background: #fff;
+}
+@media (max-width: 900px) {
+  .repo-settings > form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .repo-settings-tabs {
+    flex-direction: row;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    padding: 12px;
+  }
+  .repo-settings-tabs button {
+    flex-shrink: 0;
+  }
+  .repo-settings .modal-body {
+    padding: 20px;
+  }
+}
 .topbar {
   position: sticky;
   top: 0;

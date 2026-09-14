@@ -211,6 +211,28 @@ async function fixture() {
 }
 
 describe('Workflow lifecycle with real Git and deterministic Claude', () => {
+  it('preserves a ticket note through planning, implementation and review', async () => {
+    const f = await fixture();
+    const note = 'Keep the existing filters.\n\n**Acceptance:** preserve Polish search.';
+    const p = await f.w.create({
+      name: 'Ticket with context',
+      repoId: f.repository.id,
+      ticketUrl: 'https://example.test/task',
+      taskNote: note,
+    });
+    await settled(f.w, p.id, 'awaiting_plan');
+    expect(f.w.get(p.id).taskNote).toBe(note);
+    f.w.revisePlan(p.id, 'Include regression checks');
+    await settled(f.w, p.id, 'awaiting_plan');
+    f.w.approvePlan(p.id);
+    await settled(f.w, p.id, 'awaiting_result');
+    for (const call of f.agent.calls) {
+      expect(call.prompt).toContain(note);
+      expect(call.prompt).toContain('https://example.test/task');
+    }
+    expect(f.agent.calls[0].prompt).toContain('Retrieve the actual ticket');
+    expect(f.w.get(p.id).taskNote).toBe(note);
+  }, 60000);
   it.each(['local', 'remote'] as const)(
     'continues an existing %s branch only after confirmation and preserves its history',
     async (source) => {

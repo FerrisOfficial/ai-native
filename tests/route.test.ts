@@ -4,6 +4,11 @@ import { parseHash, buildHash, type Route } from '../src/route.js';
 const routes: Route[] = [
   { page: 'board' },
   { page: 'repositories' },
+  ...(['General', 'Workflow', 'Workspace', 'Terminals', 'Permissions'] as const).map((tab) => ({
+    page: 'repository' as const,
+    id: 'repo/with spaces',
+    tab,
+  })),
   { page: 'skills' },
   { page: 'settings' },
   { page: 'project', id: 'abc123', tab: 'Overview' },
@@ -70,4 +75,17 @@ it('never throws on garbage or malformed percent-encoding', () => {
   for (const hash of ['#/project/%', '#/%zz', '#///']) {
     expect(() => parseHash(hash)).not.toThrow();
   }
+});
+it('defaults repository sections and rejects broken repository routes', () => {
+  expect(parseHash('#/repository/repo')).toEqual({
+    route: { page: 'repository', id: 'repo', tab: 'General' },
+    malformed: false,
+  });
+  expect(parseHash('#/repository/repo/unknown').route).toEqual({
+    page: 'repository',
+    id: 'repo',
+    tab: 'General',
+  });
+  for (const hash of ['#/repository', '#/repository/%', '#/repository/repo/General/extra'])
+    expect(parseHash(hash).malformed).toBe(true);
 });

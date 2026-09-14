@@ -59,6 +59,7 @@ import { UsagePanel } from './UsagePanel';
 import { needsInput } from './project-attention';
 import { taskDescriptionLimit } from '../shared/task-source';
 import { parseHash, buildHash, type Page, type Tab, type Route } from './route';
+import { repositoryTabs, type RepositoryTab } from './route';
 const LazyTerminalView = lazy(() => import('./TerminalView'));
 function Markdown({ children }: { children: string }) {
   return (
@@ -466,12 +467,18 @@ function RepositoryForm({
   models,
   close,
   save,
+  embedded = false,
+  section = 'General',
+  changeSection,
 }: {
   initial?: Repository;
   skills: Skill[];
   models: { value: string; displayName: string }[];
   close: () => void;
   save: (repo: RepoInput, id?: string) => Promise<void>;
+  embedded?: boolean;
+  section?: RepositoryTab;
+  changeSection?: (section: RepositoryTab) => void;
 }) {
   const [form, setForm] = useState<RepoInput>(
     initial ?? {
@@ -497,6 +504,7 @@ function RepositoryForm({
   );
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
   const update = (key: keyof RepoInput, value: unknown) => setForm((f) => ({ ...f, [key]: value }));
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -528,22 +536,56 @@ function RepositoryForm({
         },
         initial?.id,
       );
-      close();
+      if (embedded) setSaved(true);
+      else close();
     } catch (e) {
       setError(errorMessage(e));
     } finally {
       setBusy(false);
     }
   }
-  return (
-    <Modal
-      title={initial ? 'Repository settings' : 'Add a repository'}
-      subtitle="Configure once. Every new project gets its own copy."
-      close={close}
-      wide
+  const content = (
+    <form
+      onSubmit={submit}
+      onChange={() => setSaved(false)}
+      onInvalidCapture={(event) => {
+        if (!embedded) return;
+        event.preventDefault();
+        const target = event.target as HTMLElement;
+        const invalidSection = target
+          .closest('fieldset')
+          ?.getAttribute('data-section') as RepositoryTab;
+        if (invalidSection) changeSection?.(invalidSection);
+        setError('Fill in the required fields before saving.');
+      }}
     >
-      <form onSubmit={submit}>
-        <div className="modal-body">
+      {embedded && (
+        <div className="repo-settings-tabs" aria-label="Repository settings sections">
+          {repositoryTabs.map((tab) => (
+            <button
+              type="button"
+              key={tab}
+              className={tab === section ? 'active' : ''}
+              aria-current={tab === section ? 'page' : undefined}
+              onClick={() => changeSection?.(tab)}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="modal-body">
+        <fieldset
+          className="repo-settings-section"
+          data-section="General"
+          hidden={embedded && section !== 'General'}
+        >
+          {embedded && (
+            <div className="repo-section-heading">
+              <h2>General</h2>
+              <p>Repository location and the starting branch for new projects.</p>
+            </div>
+          )}
           <div className="form-grid">
             <Field label="Name">
               <input
@@ -570,19 +612,13 @@ function RepositoryForm({
               placeholder="C:\Users\you\Repos\my-app"
             />
           </Field>
+        </fieldset>
+        <fieldset
+          className="repo-settings-section"
+          data-section="Workflow"
+          hidden={embedded && section !== 'Workflow'}
+        >
           <h3 className="section-heading">Workflow defaults</h3>
-          <Field
-            label="Claude permissions"
-            hint="Applies to new projects. Planning can ask questions and still requires your approval. Auto approve runs implementation and review without tool permission prompts. You review the result and can request corrections before publishing."
-          >
-            <select
-              value={form.autoApprove ? 'auto' : 'manual'}
-              onChange={(e) => update('autoApprove', e.target.value === 'auto')}
-            >
-              <option value="manual">Standard permissions</option>
-              <option value="auto">Auto approve implementation & review</option>
-            </select>
-          </Field>
           <Button onClick={refreshSkills}>Refresh repository skills</Button>
           {skillError && (
             <div className="notice error">Could not load repository skills: {skillError}</div>
@@ -606,6 +642,12 @@ function RepositoryForm({
               folder. All three stages require a valid skill.
             </div>
           )}
+        </fieldset>
+        <fieldset
+          className="repo-settings-section"
+          data-section="Workspace"
+          hidden={embedded && section !== 'Workspace'}
+        >
           <h3 className="section-heading">Workspace setup</h3>
           <Button
             disabled={busy || !form.path.trim()}
@@ -705,6 +747,12 @@ function RepositoryForm({
               placeholder={'.env\n.claude/settings.local.json'}
             />
           </Field>
+        </fieldset>
+        <fieldset
+          className="repo-settings-section"
+          data-section="Terminals"
+          hidden={embedded && section !== 'Terminals'}
+        >
           <div className="section-heading row">
             <h3>Named terminals</h3>
             <Button
@@ -783,17 +831,53 @@ function RepositoryForm({
               </Field>
             </div>
           ))}
+        </fieldset>
+        <fieldset
+          className="repo-settings-section"
+          data-section="Permissions"
+          hidden={embedded && section !== 'Permissions'}
+        >
+          <h3 className="section-heading">Permissions</h3>
+          <Field
+            label="Claude permissions"
+            hint="Applies to new projects. With Auto approve enabled, commands are approved automatically in every stage. Planning still asks about unclear requirements and requires your approval. You can request corrections before publishing."
+          >
+            <select
+              value={form.autoApprove ? 'auto' : 'manual'}
+              onChange={(e) => update('autoApprove', e.target.value === 'auto')}
+            >
+              <option value="manual">Standard permissions</option>
+              <option value="auto">Auto approve tools in all stages</option>
+            </select>
+          </Field>
           {initial && <RepositoryPermissions repoId={initial.id} />}
-          {error && <div className="notice error">{error}</div>}
-        </div>
-        <footer>
-          <Button onClick={close}>Cancel</Button>
-          <Button type="submit" primary disabled={busy || !skills.some((s) => s.valid)}>
-            {busy ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}{' '}
-            {initial ? 'Save settings' : 'Add repository'}
-          </Button>
-        </footer>
-      </form>
+        </fieldset>
+        {error && <div className="notice error">{error}</div>}
+        {saved && (
+          <div className="notice soft" role="status">
+            Settings saved. New projects will use this configuration.
+          </div>
+        )}
+      </div>
+      <footer>
+        <Button onClick={close}>{embedded ? 'Back to repositories' : 'Cancel'}</Button>
+        <Button type="submit" primary disabled={busy || !skills.some((s) => s.valid)}>
+          {busy ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}{' '}
+          {initial ? 'Save settings' : 'Add repository'}
+        </Button>
+      </footer>
+    </form>
+  );
+  return embedded ? (
+    <div className="repo-settings panel">{content}</div>
+  ) : (
+    <Modal
+      title={initial ? 'Repository settings' : 'Add a repository'}
+      subtitle="Configure once. Every new project gets its own copy."
+      close={close}
+      wide
+    >
+      {content}
     </Modal>
   );
 }
@@ -819,6 +903,7 @@ function NewProject({
     [ticketUrl, setTicketUrl] = useState('');
   const [taskSource, setTaskSource] = useState<'url' | 'description'>('url');
   const [taskDescription, setTaskDescription] = useState('');
+  const [taskNote, setTaskNote] = useState('');
   const [branch, setBranch] = useState('');
   const [branchConfirmation, setBranchConfirmation] = useState<{
     key: string;
@@ -852,7 +937,7 @@ function NewProject({
               branch,
               reuseExistingBranch: confirmBranch && branchConfirmation.confirmed,
               taskSource,
-              ...(taskSource === 'url' ? { ticketUrl } : { taskDescription }),
+              ...(taskSource === 'url' ? { ticketUrl, taskNote } : { taskDescription }),
               choices,
               budgetUsd: budget.trim() ? Number(budget) : null,
             });
@@ -935,19 +1020,33 @@ function NewProject({
             </select>
           </Field>
           {taskSource === 'url' ? (
-            <Field
-              label="Ticket URL"
-              hint="The planning skill retrieves the ticket through your existing MCP or CLI tools."
-            >
-              <input
-                required
-                type="url"
-                maxLength={4000}
-                value={ticketUrl}
-                onChange={(e) => setTicketUrl(e.target.value)}
-                placeholder="https://linear.app/your-team/issue/…"
-              />
-            </Field>
+            <>
+              <Field
+                label="Ticket URL"
+                hint="The planning skill retrieves the ticket through your existing MCP or CLI tools."
+              >
+                <input
+                  required
+                  type="url"
+                  maxLength={4000}
+                  value={ticketUrl}
+                  onChange={(e) => setTicketUrl(e.target.value)}
+                  placeholder="https://linear.app/your-team/issue/…"
+                />
+              </Field>
+              <Field
+                label="Additional note (optional)"
+                hint="Add context, constraints, or instructions to supplement the ticket. Markdown is supported."
+              >
+                <textarea
+                  rows={4}
+                  maxLength={taskDescriptionLimit}
+                  value={taskNote}
+                  onChange={(e) => setTaskNote(e.target.value)}
+                  placeholder="Anything the agent should know in addition to the ticket?"
+                />
+              </Field>
+            </>
           ) : (
             <Field
               label="Task description"
@@ -1219,7 +1318,11 @@ export default function App() {
   const initialRoute = initialRouteRef.current;
   const [snapshot, setSnapshot] = useState<Snapshot>(emptySnapshot),
     [page, setPage] = useState<Page>(
-      initialRoute.route.page === 'project' ? 'board' : initialRoute.route.page,
+      initialRoute.route.page === 'project'
+        ? 'board'
+        : initialRoute.route.page === 'repository'
+          ? 'repositories'
+          : initialRoute.route.page,
     );
   const [detail, setDetail] = useState<ProjectDetail>(),
     [selectedId, setSelectedId] = useState<string | undefined>(
@@ -1237,6 +1340,12 @@ export default function App() {
     [projectModal, setProjectModal] = useState(false),
     [busy, setBusy] = useState(false);
   const [removeRepo, setRemoveRepo] = useState<Repository>();
+  const [selectedRepoId, setSelectedRepoId] = useState<string | undefined>(
+    initialRoute.route.page === 'repository' ? initialRoute.route.id : undefined,
+  );
+  const [repoSection, setRepoSection] = useState<RepositoryTab>(
+    initialRoute.route.page === 'repository' ? initialRoute.route.tab : 'General',
+  );
   const [feedback, setFeedback] = useState(''),
     [selectedItems, setSelectedItems] = useState<string[]>([]),
     [terminalId, setTerminalId] = useState<string>(),
@@ -1257,13 +1366,15 @@ export default function App() {
     refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   selectedRef.current = selectedId;
   const applyRoute = useCallback((route: Route) => {
+    setSelectedRepoId(route.page === 'repository' ? route.id : undefined);
+    if (route.page === 'repository') setRepoSection(route.tab);
     selectedRef.current = route.page === 'project' ? route.id : undefined;
     if (route.page === 'project') {
       setPage('board');
       setSelectedId(route.id);
       setTab(route.tab);
     } else {
-      setPage(route.page);
+      setPage(route.page === 'repository' ? 'repositories' : route.page);
       setSelectedId(undefined);
     }
   }, []);
@@ -1483,12 +1594,16 @@ export default function App() {
       /* The model field accepts a manual alias if discovery is unavailable. */
     }
   }
+  useEffect(() => {
+    if (selectedRepoId) void loadModels();
+  }, [selectedRepoId]);
   const p = detail?.project;
+  const selectedRepository = snapshot.repositories.find((repo) => repo.id === selectedRepoId);
   const projects = snapshot.projects.filter(
     (p) =>
       (showArchived ? p.status === 'archived' : p.status !== 'archived') &&
       (filter === 'all' || p.repoId === filter) &&
-      `${p.name} ${p.ticketUrl ?? ''} ${p.taskDescription ?? ''} ${p.config.name}`
+      `${p.name} ${p.ticketUrl ?? ''} ${p.taskDescription ?? ''} ${p.taskNote ?? ''} ${p.config.name}`
         .toLowerCase()
         .includes(search.toLowerCase()),
   );
@@ -1592,6 +1707,12 @@ export default function App() {
             <span>Workspace</span>
             <span>/</span>
             <strong>{navItems.find((n) => n[0] === page)?.[2]}</strong>
+            {selectedRepoId && (
+              <>
+                <span>/</span>
+                <strong>{selectedRepository?.name ?? 'Repository'}</strong>
+              </>
+            )}
             {selectedId && (
               <>
                 <span>/</span>
@@ -1640,7 +1761,49 @@ export default function App() {
           </div>
         )}
         <main>
-          {selectedId ? (
+          {selectedRepoId ? (
+            <>
+              <button className="back-link" onClick={() => navigate('repositories')}>
+                <ArrowLeft size={15} /> All repositories
+              </button>
+              {selectedRepository ? (
+                <>
+                  <div className="page-heading">
+                    <div>
+                      <div className="eyebrow">REPOSITORY SETTINGS</div>
+                      <h1>{selectedRepository.name}</h1>
+                      <p>Configure once. Every new project gets its own copy.</p>
+                    </div>
+                    <div className="repo-logo">
+                      <FolderGit2 size={26} />
+                    </div>
+                  </div>
+                  <RepositoryForm
+                    key={selectedRepository.id}
+                    initial={selectedRepository}
+                    embedded
+                    section={repoSection}
+                    changeSection={(tab) => goTo({ page: 'repository', id: selectedRepoId, tab })}
+                    skills={snapshot.skills}
+                    models={models}
+                    close={() => navigate('repositories')}
+                    save={async (repo, id) => {
+                      await api(`/repositories/${id}`, repo, 'PUT');
+                      await refresh();
+                    }}
+                  />
+                </>
+              ) : (
+                <Empty
+                  icon={<FolderGit2 />}
+                  title={connected ? 'Repository not found' : 'Loading repository…'}
+                >
+                  This repository may have been removed. Return to the repository list to choose
+                  another.
+                </Empty>
+              )}
+            </>
+          ) : selectedId ? (
             !detail ? (
               <div className="loading">
                 <LoaderCircle className="spin" /> Loading project…
@@ -1762,6 +1925,14 @@ export default function App() {
                             <h3>Task description</h3>
                             <div className="markdown">
                               <Markdown>{p!.taskDescription ?? ''}</Markdown>
+                            </div>
+                          </section>
+                        )}
+                        {p!.taskNote && (
+                          <section className="panel">
+                            <h3>Additional note</h3>
+                            <div className="markdown">
+                              <Markdown>{p!.taskNote}</Markdown>
                             </div>
                           </section>
                         )}
@@ -2589,16 +2760,23 @@ export default function App() {
                         <div className="repo-logo">
                           <FolderGit2 size={23} />
                         </div>
-                        <h3>{r.name}</h3>
+                        <h3>
+                          <a
+                            className="repo-title-link"
+                            href={buildHash({ page: 'repository', id: r.id, tab: 'General' })}
+                          >
+                            {r.name}
+                          </a>
+                        </h3>
                         <button
                           className="icon-button push-right"
-                          aria-label={`Edit ${r.name}`}
+                          aria-label={`Open settings for ${r.name}`}
                           onClick={() => {
-                            setRepoModal(r);
+                            goTo({ page: 'repository', id: r.id, tab: 'General' });
                             void loadModels();
                           }}
                         >
-                          <Settings2 size={17} />
+                          <ArrowRight size={17} />
                         </button>
                         <button
                           className="icon-button"

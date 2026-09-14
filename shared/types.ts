@@ -86,6 +86,7 @@ export type Project = {
   taskSource?: 'url' | 'description';
   ticketUrl?: string;
   taskDescription?: string;
+  taskNote?: string;
   repoId: string;
   config: Repository;
   choices: Choices;
