@@ -1,0 +1,12 @@
+{
+  "isolatedData": "C:\\Users\\Maciej\\Repos\\ai-native\\.data\\dogfood\\second-engine-fXy7Zk",
+  "portWasOccupied": true,
+  "exitCode": 1,
+  "addressInUseReported": true,
+  "afterFailedStartup": {
+    "projects": "interrupted",
+    "runs": "interrupted",
+    "terminals": "interrupted",
+    "questions": "expired"
+  }
+}

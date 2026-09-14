@@ -1,6 +1,6 @@
+import { testDirectory } from './temp.js';
 import { it, expect, vi, beforeEach } from 'vitest';
-import { mkdir, mkdtemp } from 'node:fs/promises';
-import { resolve, join } from 'node:path';
+import { join } from 'node:path';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { Project, Run } from '../shared/types.js';
 const mock = vi.hoisted(() => ({ messages: [] as unknown[], query: vi.fn() }));
@@ -21,8 +21,7 @@ beforeEach(() => {
   );
 });
 async function fixture() {
-  await mkdir(resolve('.data/tests'), { recursive: true });
-  const root = await mkdtemp(resolve('.data/tests/usage-'));
+  const root = await testDirectory();
   return new Store(join(root, 'usage.sqlite'));
 }
 const run = (id: string): Run => ({
@@ -71,6 +70,80 @@ const result = {
   },
   structured_output: { ticketAccessible: true, ticket: 'Ticket', plan: 'Plan' },
 };
+
+it('preserves a structured result across continuation results and uses the latest cumulative cost', async () => {
+  const store = await fixture();
+  try {
+    const driver = new ClaudeDriver(store);
+    store.put('runs', run('continuation'));
+    mock.messages = [result, { ...result, structured_output: undefined, total_cost_usd: 2.5 }];
+    await expect(
+      driver.execute({
+        project,
+        stage: 'plan',
+        prompt: 'test',
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toEqual(result.structured_output);
+    expect(store.get<Run>('runs', 'continuation')?.usage?.costUsd).toBe(2.5);
+    expect(remainingBudget(projectRuns(store, project.id), 5)).toBe(2.5);
+  } finally {
+    store.close();
+  }
+});
+
+it.each([
+  { messages: [{ ...result, structured_output: undefined }], error: 'without a structured result' },
+  { messages: [result, { ...result, structured_output: {} }], error: 'invalid structured result' },
+  {
+    messages: [result, { ...result, subtype: 'error_max_budget_usd', total_cost_usd: 5.2 }],
+    error: 'spending limit',
+  },
+  {
+    messages: [result, { ...result, is_error: true, result: 'explicit failure' }],
+    error: 'explicit failure',
+  },
+])('fails clearly without hiding a later error: $error', async ({ messages, error }) => {
+  const store = await fixture();
+  try {
+    store.put('runs', run('failure'));
+    mock.messages = messages;
+    await expect(
+      new ClaudeDriver(store).execute({
+        project,
+        stage: 'plan',
+        prompt: 'test',
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(error);
+  } finally {
+    store.close();
+  }
+});
+
+it('does not accept a child result or replace the resumable main session with it', async () => {
+  const store = await fixture();
+  try {
+    store.put('runs', run('child'));
+    mock.messages = [
+      { type: 'system', subtype: 'init', session_id: 'main' },
+      { ...result, session_id: 'child' },
+      { ...result, session_id: 'main', structured_output: undefined },
+    ];
+    await expect(
+      new ClaudeDriver(store).execute({
+        project,
+        stage: 'plan',
+        prompt: 'test',
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow('without a structured result');
+    expect(store.all<{ claudeId: string }>('sessions')[0].claudeId).toBe('main');
+    expect(store.events(project.id).filter((e) => e.kind === 'agent_result')).toHaveLength(1);
+  } finally {
+    store.close();
+  }
+});
 
 it('records whole-tree tokens once per result and passes remaining budget on resume', async () => {
   const store = await fixture();
@@ -384,7 +457,7 @@ it('batch approval unblocks concurrent matching questions, validates all rules b
 it('retains legacy exact rules and new prefixes after restart, including revocation', async () => {
   const { rememberCommand, findCommand, commandSignature } =
     await import('../server/permissions.js');
-  const root = await mkdtemp(resolve('.data/tests/permission-restart-'));
+  const root = await testDirectory();
   const file = join(root, 'state.sqlite');
   let store = new Store(file);
   const p = { repoId: 'restart' };

@@ -1,12 +1,12 @@
+import { testDirectory } from './temp.js';
 import { it, expect } from 'vitest';
-import { mkdir, mkdtemp, readFile, writeFile, access, symlink } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { mkdir, readFile, writeFile, access, symlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import { availableSkills, bundledSkillName, scanSkills, snapshotSkills } from '../server/skills.js';
 import type { Choices } from '../shared/types.js';
 
 it('discovers repository skills separately and snapshots their instructions and support files', async () => {
-  await mkdir(resolve('.data/tests'), { recursive: true });
-  const root = await mkdtemp(resolve('.data/tests/skills-'));
+  const root = await testDirectory();
   const app = join(root, 'application');
   const repo = join(root, 'repo');
   const other = join(root, 'other');
@@ -54,8 +54,7 @@ it('discovers repository skills separately and snapshots their instructions and 
 });
 
 it('rejects linked repository skill roots', async () => {
-  await mkdir(resolve('.data/tests'), { recursive: true });
-  const root = await mkdtemp(resolve('.data/tests/skills-link-'));
+  const root = await testDirectory();
   const repo = join(root, 'repo');
   const external = join(root, 'external');
   await mkdir(repo);

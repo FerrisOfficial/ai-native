@@ -339,11 +339,27 @@ export class ClaudeDriver implements AgentDriver {
     });
     this.active.set(project.id, stream);
     let result: unknown;
+    let querySessionId: string | undefined;
     try {
       for await (const message of stream) {
-        if ('session_id' in message && message.session_id !== currentSession.claudeId) {
-          currentSession.claudeId = message.session_id;
+        if (
+          (message.type === 'system' && message.subtype === 'init') ||
+          message.type === 'result'
+        ) {
+          querySessionId ??= message.session_id;
+          currentSession.claudeId = querySessionId;
           this.store.put('sessions', currentSession);
+        }
+        if (message.type === 'result' && message.session_id !== querySessionId) {
+          this.store.event(
+            'diagnostic',
+            {
+              stage,
+              text: 'Ignored a result from another SDK session; the main query reports aggregate usage.',
+            },
+            project.id,
+          );
+          continue;
         }
         this.record(message, project.id, currentSession);
         if (message.type === 'result') {
@@ -357,9 +373,20 @@ export class ClaudeDriver implements AgentDriver {
             );
           if (message.is_error) throw new Error(message.result || 'Claude returned an error');
           if (signal.aborted) throw new Error('Interrupted by user');
-          result = schema.parse(message.structured_output);
+          // Continuations can report a newer cumulative cost with no new output.
+          // Preserve the last valid result, but never hide explicit errors or an
+          // invalid replacement. Only the main session may complete this stage.
+          if (message.structured_output !== undefined) {
+            const parsed = schema.safeParse(message.structured_output);
+            if (!parsed.success)
+              throw new Error(
+                'Claude returned an invalid structured result. Resume to retry this stage.',
+              );
+            result = parsed.data;
+          }
         }
       }
+      if (signal.aborted) throw new Error('Interrupted by user');
       if (!result)
         throw new Error('Claude stopped without a structured result. Resume to retry this stage.');
       return result;

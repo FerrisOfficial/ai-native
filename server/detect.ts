@@ -4,7 +4,10 @@ import { inside } from './skills.js';
 import type { RepoSuggestion } from '../shared/types.js';
 
 // Discovery only reads manifests. Commands are proposals, never executed here.
-export async function detectRepository(path: string): Promise<RepoSuggestion> {
+export async function detectRepository(
+  path: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<RepoSuggestion> {
   const root = await realpath(path);
   const files = new Set(await readdir(root));
   const result: RepoSuggestion = {
@@ -43,6 +46,7 @@ export async function detectRepository(path: string): Promise<RepoSuggestion> {
         : 'npm';
     const ambiguous =
       managers.size > 1 || (declared && managers.size > 0 && !managers.has(declared));
+    const launcher = platform === 'win32' && manager !== 'bun' ? `${manager}.cmd` : manager;
     if (ambiguous)
       result.warnings.push(
         'Conflicting package-manager metadata. Choose the correct setup command before saving.',
@@ -51,13 +55,13 @@ export async function detectRepository(path: string): Promise<RepoSuggestion> {
       result.setupCommand =
         manager === 'npm'
           ? managers.has('npm')
-            ? 'npm ci'
-            : 'npm install'
+            ? `${launcher} ci`
+            : `${launcher} install`
           : manager === 'pnpm'
-            ? `pnpm install${managers.has('pnpm') ? ' --frozen-lockfile' : ''}`
+            ? `${launcher} install${managers.has('pnpm') ? ' --frozen-lockfile' : ''}`
             : manager === 'bun'
               ? `bun install${managers.has('bun') ? ' --frozen-lockfile' : ''}`
-              : 'yarn install';
+              : `${launcher} install`;
     if (manager !== 'npm') result.warnings.push(`Setup requires ${manager} to be installed.`);
     const scripts = pkg.scripts && typeof pkg.scripts === 'object' ? pkg.scripts : {};
     const deps = { ...pkg.dependencies, ...pkg.devDependencies };
@@ -65,7 +69,7 @@ export async function detectRepository(path: string): Promise<RepoSuggestion> {
       result.warnings.push('Package workspaces detected. Review the scope of root scripts.');
     if (typeof scripts.test === 'string' && !/no test specified/i.test(scripts.test)) {
       const separator = manager === 'npm' ? ' --' : '';
-      result.testCommand = `${manager} run test`;
+      result.testCommand = `${launcher} run test`;
       if (/\bvitest\b/.test(scripts.test) && !/\b(run|watch)\b/.test(scripts.test))
         result.testCommand += `${separator} --run`;
       if (/react-scripts\s+test/.test(scripts.test))
@@ -82,7 +86,7 @@ export async function detectRepository(path: string): Promise<RepoSuggestion> {
           ? 'start'
           : undefined;
     if (script) {
-      let command = `${manager} run ${script}`;
+      let command = `${launcher} run ${script}`;
       const separator = manager === 'npm' ? ' --' : '';
       if (/\bvite\b/.test(scripts[script])) {
         result.detected.push('Vite');

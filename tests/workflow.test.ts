@@ -1,6 +1,7 @@
+import { testDirectory } from './temp.js';
 import { afterEach, describe, expect, it } from 'vitest';
-import { access, mkdtemp, mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { access, mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { AgentRequest, AgentDriver } from '../server/claude.js';
 import { ClaudeDriver } from '../server/claude.js';
@@ -104,9 +105,7 @@ async function settled(w: Workflow, id: string, status: string) {
   throw new Error(`Timed out: expected ${status}, got ${w.get(id).status}: ${w.get(id).error}`);
 }
 async function fixture() {
-  const testsRoot = resolve('.data/tests');
-  await mkdir(testsRoot, { recursive: true });
-  const root = await mkdtemp(join(testsRoot, 'workflow-'));
+  const root = await testDirectory();
   const repo = join(root, 'repo'),
     remote = join(root, 'remote.git'),
     skills = join(root, 'skills');
@@ -213,7 +212,7 @@ async function fixture() {
 
 describe('Workflow lifecycle with real Git and deterministic Claude', () => {
   it('isolates two projects, snapshots skills, gates implementation, and performs only selected corrections', async () => {
-    const { w, agent, repo, skills, store, create, state } = await fixture();
+    const { w, agent, repo, skills, store, create, state, root, git } = await fixture();
     const first = await create(),
       second = await create();
     await settled(w, first.id, 'awaiting_plan');
@@ -221,6 +220,9 @@ describe('Workflow lifecycle with real Git and deterministic Claude', () => {
     expect(first.worktree).not.toBe(second.worktree);
     expect(first.branch).not.toBe(second.branch);
     expect(first.port).not.toBe(second.port);
+    const relocated = new GitService(join(root, 'short-worktrees'), git.runner, [git.root]);
+    await expect(relocated.assertWorktree(first)).resolves.toBeUndefined();
+    await expect(relocated.assertWorktree({ ...first, worktree: repo })).rejects.toThrow('outside');
     expect(agent.calls.every((c) => c.stage === 'plan')).toBe(true);
     expect(w.active.size).toBe(0);
     const original = await readFile(join(first.skillRoot, 'skills/planner/SKILL.md'), 'utf8');

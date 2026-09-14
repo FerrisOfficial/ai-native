@@ -18,6 +18,7 @@ export class GitService {
   constructor(
     public root: string,
     public runner: CommandRunner = run,
+    public previousRoots: string[] = [],
   ) {}
   git(args: string[], cwd: string) {
     return checked(this.runner, 'git', args, cwd);
@@ -57,10 +58,10 @@ export class GitService {
     return target;
   }
   async assertWorktree(p: Project) {
-    if (!inside(this.root, p.worktree))
-      throw new Error('Worktree is outside the managed directory');
+    const managedRoot = [this.root, ...this.previousRoots].find((root) => inside(root, p.worktree));
+    if (!managedRoot) throw new Error('Worktree is outside the managed directory');
     const actual = await realpath(p.worktree);
-    const root = await realpath(this.root);
+    const root = await realpath(managedRoot);
     if (!inside(root, actual)) throw new Error('Worktree resolves outside the managed directory');
     const branch = await this.git(['branch', '--show-current'], p.worktree);
     if (branch !== p.branch)
@@ -70,7 +71,8 @@ export class GitService {
   }
   async prepare(p: Project): Promise<string> {
     await mkdir(this.root, { recursive: true });
-    if (!inside(this.root, p.worktree)) throw new Error('Invalid worktree destination');
+    if (![this.root, ...this.previousRoots].some((root) => inside(root, p.worktree)))
+      throw new Error('Invalid worktree destination');
     let exists = true;
     try {
       await access(p.worktree);

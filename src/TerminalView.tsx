@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import type { TerminalRecord } from '../shared/types';
+import { TerminalWriter } from './terminal-writer';
 
 export default function TerminalView({
   record,
@@ -30,9 +31,12 @@ export default function TerminalView({
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(el.current!);
-    terminal.write(record.output);
+    const writer = new TerminalWriter(terminal);
+    writer.write(record.output, true);
     fit.fit();
-    const input = terminal.onData((text) => send({ type: 'input', terminalId: record.id, text }));
+    const input = terminal.onData((text) => {
+      if (!writer.replaying) send({ type: 'input', terminalId: record.id, text });
+    });
     const resize = () => {
       fit.fit();
       send({ type: 'resize', terminalId: record.id, cols: terminal.cols, rows: terminal.rows });
@@ -40,11 +44,15 @@ export default function TerminalView({
     const observer = new ResizeObserver(resize);
     observer.observe(el.current!);
     const unsubscribe = subscribe((data) => {
+      if (data.kind === 'connection_open') {
+        send({ type: 'attach', terminalId: record.id });
+        resize();
+        return;
+      }
       if (data.terminalId !== record.id) return;
       if (data.kind === 'terminal_snapshot') {
-        terminal.reset();
-        terminal.write(data.text);
-      } else if (data.kind === 'terminal_data') terminal.write(data.text);
+        writer.write(data.text, true);
+      } else if (data.kind === 'terminal_data') writer.write(data.text);
     });
     send({ type: 'attach', terminalId: record.id });
     resize();
@@ -52,6 +60,7 @@ export default function TerminalView({
       unsubscribe();
       observer.disconnect();
       input.dispose();
+      writer.dispose();
       terminal.dispose();
     };
   }, [record.id]);

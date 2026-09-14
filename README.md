@@ -7,9 +7,9 @@ A local Kanban for Claude Code. Each project owns a Git worktree, a fixed workfl
 Requirements: Node.js 24 or newer, Git for Windows (including Git Bash for Claude), Claude Code, GitHub CLI, and Windows PowerShell. Claude and GitHub use your existing local authentication.
 
 ```powershell
-npm ci
-npm run build
-npm start
+npm.cmd ci
+npm.cmd run build
+npm.cmd start
 ```
 
 Open **http://127.0.0.1:4317**. Keep the server running when closing the browser. The server is bound to loopback only.
@@ -17,11 +17,32 @@ Open **http://127.0.0.1:4317**. Keep the server running when closing the browser
 If npm asks for approval of native installation scripts, approve the two dependencies used by this app:
 
 ```powershell
-npm approve-scripts node-pty esbuild
-npm rebuild node-pty esbuild
+npm.cmd approve-scripts node-pty esbuild
+npm.cmd rebuild node-pty esbuild
 ```
 
-For development, run `npm run dev` and `npm run dev:ui` in separate terminals, then open http://127.0.0.1:5173. Backend changes require a restart; Vite reloads the frontend.
+For development, run `npm.cmd run dev` and `npm.cmd run dev:ui` in separate terminals, then open http://127.0.0.1:5173. Backend changes require a restart; Vite reloads the frontend.
+
+Windows command detection uses `npm.cmd`, `pnpm.cmd`, and `yarn.cmd` so PowerShell
+does not choose a blocked `.ps1` shim. Bun uses its native executable. Existing
+saved repository/project commands are not silently rewritten.
+
+Only one engine may use an `AI_NATIVE_DATA` directory. A separate SQLite lock is
+held until shutdown and released by the operating system after a crash. Do not
+delete `engine-lock.sqlite` while an engine is running. Stop older application
+versions before upgrading: they do not participate in this lock. Recovery occurs
+only after the server successfully binds its port.
+
+For dogfooding, give every preview a separate `AI_NATIVE_DATA` outside the source
+tree. On Windows, `AI_NATIVE_WORKTREES` can point to a shorter, dedicated directory
+for new worktrees. Existing projects under the default data/worktrees directory
+remain supported. Keep a custom root stable while it contains managed projects;
+changing it does not relocate existing worktrees. No global Git or PowerShell
+security setting is changed.
+
+Tests use short system temporary directories and clean up their fixtures.
+`AI_NATIVE_TEST_TEMP` optionally overrides that parent directory. Vitest only
+discovers `tests/**/*.test.ts`, excluding cloned worktrees and application data.
 
 ## First project
 
@@ -57,6 +78,9 @@ The application uses the installed Claude executable and `user`, `project`, and 
 Claude login checks cannot prove an OAuth refresh will succeed. If a stage reports expired authentication, run `claude auth login` in a normal terminal and resume the interrupted/blocked project.
 
 ## Terminals and local files
+
+Project pages and tabs have bookmarkable hash URLs. Reload and browser Back/Forward
+preserve the current view. Invalid links return to the board with an explanation.
 
 - Named terminals start after setup and run in the project's worktree. Stop/restart them from **Terminals**, or add an interactive shell.
 - **Remove** stops a terminal and removes it from the list, including after a page reload or server restart. Its saved history remains in the local database; repository files are unaffected.
@@ -115,6 +139,5 @@ The shell lexer recognizes quoted literals, Windows paths, regex arguments, Bash
 Permissions are isolated by repository and shell tool. Description, timeout and explicit false default flags do not trigger new prompts. Background execution, disabling the sandbox and other execution options remain separate. Saving a matching rule also resolves pending permission questions in that repository. Workflow publication and worktree restrictions still apply.
 
 Use **Repositories → repository settings → Saved command permissions** to manually add prefixes, search, refresh or revoke rules. Revocation affects future calls. Automatically approved commands are recorded in **Conversations**.
-
 
 Claude costs and tokens appear in **Overview → Cost & time** after each SDK call finishes, including reported error results. While waiting for the first report, unavailable totals show a dash rather than zero. Interrupted calls without a report remain unavailable; totals may be incomplete. These are SDK estimates, not subscription billing charges.

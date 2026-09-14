@@ -1,14 +1,12 @@
+import { testDirectory } from './temp.js';
 import { it, expect } from 'vitest';
-import { mkdir, mkdtemp } from 'node:fs/promises';
-import { resolve, join } from 'node:path';
+import { join } from 'node:path';
 import { Store } from '../server/store.js';
 import { Terminals } from '../server/terminals.js';
 import type { Project, TerminalRecord } from '../shared/types.js';
 
 it('runs an actual interactive shell, preserves output and waits for termination', async () => {
-  const parent = resolve('.data/tests');
-  await mkdir(parent, { recursive: true });
-  const dir = await mkdtemp(join(parent, 'terminal-'));
+  const dir = await testDirectory();
   const store = new Store(join(dir, 'terminal.sqlite'));
   const terminals = new Terminals(store);
   const p = { id: 'pty-test', worktree: dir, port: 5790 } as Project;

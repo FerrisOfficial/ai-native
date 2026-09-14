@@ -1,0 +1,27 @@
+{
+  "testFiles": 7,
+  "testsPassed": 81,
+  "durationSeconds": 100.49,
+  "command": "node C:\\Users\\Maciej\\Repos\\ai-native\\node_modules\\vitest\\vitest.mjs run",
+  "cwd": "C:\\Users\\Maciej\\Repos\\ai-native\\.data\\dg-check",
+  "files": [
+    {
+      "file": "src\\App.tsx",
+      "worktreeSha256": "623E99AAD6F564EE9DC647BFEE386C8924F8C643CB0F980DCF7C2F4ACB8B4DD1",
+      "checkedSha256": "623E99AAD6F564EE9DC647BFEE386C8924F8C643CB0F980DCF7C2F4ACB8B4DD1",
+      "equal": true
+    },
+    {
+      "file": "src\\route.ts",
+      "worktreeSha256": "E0E1792906AF05373B00C0CFEF6D6468BD3F7B3633A91012D665DCEDC2683289",
+      "checkedSha256": "E0E1792906AF05373B00C0CFEF6D6468BD3F7B3633A91012D665DCEDC2683289",
+      "equal": true
+    },
+    {
+      "file": "tests\\route.test.ts",
+      "worktreeSha256": "ED70F342857F19D83B8C8C2B04CF8BEEDD787071AD8EE5DADC532F1CE472264A",
+      "checkedSha256": "ED70F342857F19D83B8C8C2B04CF8BEEDD787071AD8EE5DADC532F1CE472264A",
+      "equal": true
+    }
+  ]
+}

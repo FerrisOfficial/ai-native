@@ -55,6 +55,7 @@ import type {
 } from '../shared/types';
 import { api, bootstrap } from './api';
 import { UsagePanel } from './UsagePanel';
+import { parseHash, buildHash, type Page, type Tab, type Route } from './route';
 const LazyTerminalView = lazy(() => import('./TerminalView'));
 function Markdown({ children }: { children: string }) {
   return (
@@ -74,8 +75,6 @@ function TerminalView(props: React.ComponentProps<typeof LazyTerminalView>) {
   );
 }
 
-type Page = 'board' | 'repositories' | 'skills' | 'settings';
-type Tab = 'Overview' | 'Plan' | 'Conversations' | 'Review' | 'Terminals';
 const columns = ['New', 'Planning', 'Implementation', 'Verification', 'Needs input', 'Published'];
 const stageNames: Record<string, string> = {
   prepare: 'Prepare workspace',
@@ -787,22 +786,25 @@ function RepositoryForm({
 
 function NewProject({
   repositories,
+  initialRepoId,
   skills: applicationSkills,
   models,
   close,
   create,
 }: {
   repositories: Repository[];
+  initialRepoId?: string;
   skills: Skill[];
   models: { value: string; displayName: string }[];
   close: () => void;
   create: (body: unknown) => Promise<void>;
 }) {
-  const [repoId, setRepoId] = useState(repositories[0]?.id ?? ''),
+  const initialRepository = repositories.find((r) => r.id === initialRepoId) ?? repositories[0];
+  const [repoId, setRepoId] = useState(initialRepository?.id ?? ''),
     [name, setName] = useState(''),
     [ticketUrl, setTicketUrl] = useState('');
   const [budget, setBudget] = useState('');
-  const [choices, setChoices] = useState(repositories[0]?.choices ?? defaultChoices()),
+  const [choices, setChoices] = useState(initialRepository?.choices ?? defaultChoices()),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
   const { skills, skillError, refreshSkills } = useRepositorySkills(
@@ -1115,11 +1117,21 @@ function QuestionCard({
 }
 
 export default function App() {
+  const initialRouteRef = useRef<{ route: Route; malformed: boolean } | undefined>(undefined);
+  if (initialRouteRef.current === undefined)
+    initialRouteRef.current = parseHash(window.location.hash);
+  const initialRoute = initialRouteRef.current;
   const [snapshot, setSnapshot] = useState<Snapshot>(emptySnapshot),
-    [page, setPage] = useState<Page>('board');
+    [page, setPage] = useState<Page>(
+      initialRoute.route.page === 'project' ? 'board' : initialRoute.route.page,
+    );
   const [detail, setDetail] = useState<ProjectDetail>(),
-    [selectedId, setSelectedId] = useState<string>(),
-    [tab, setTab] = useState<Tab>('Overview');
+    [selectedId, setSelectedId] = useState<string | undefined>(
+      initialRoute.route.page === 'project' ? initialRoute.route.id : undefined,
+    ),
+    [tab, setTab] = useState<Tab>(
+      initialRoute.route.page === 'project' ? initialRoute.route.tab : 'Overview',
+    );
   const [error, setError] = useState(''),
     [connected, setConnected] = useState(false),
     [search, setSearch] = useState(''),
@@ -1147,6 +1159,49 @@ export default function App() {
     selectedRef = useRef(selectedId),
     refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   selectedRef.current = selectedId;
+  const applyRoute = useCallback((route: Route) => {
+    selectedRef.current = route.page === 'project' ? route.id : undefined;
+    if (route.page === 'project') {
+      setPage('board');
+      setSelectedId(route.id);
+      setTab(route.tab);
+    } else {
+      setPage(route.page);
+      setSelectedId(undefined);
+    }
+  }, []);
+  const goTo = useCallback(
+    (route: Route, replace = false) => {
+      const hash = buildHash(route);
+      if (replace) {
+        history.replaceState(null, '', hash);
+      } else if (window.location.hash !== hash) {
+        window.location.hash = hash;
+      }
+      // Update intent synchronously, before a previous request can reject.
+      applyRoute(route);
+    },
+    [applyRoute],
+  );
+  useEffect(() => {
+    if (initialRoute.malformed) {
+      setError("That link isn't a valid page — showing the board instead.");
+      history.replaceState(null, '', buildHash({ page: 'board' }));
+    }
+    // Mount-only: initialRoute is fixed at first render (see initialRouteRef above).
+  }, []);
+  useEffect(() => {
+    const onHashChange = () => {
+      const { route, malformed } = parseHash(window.location.hash);
+      applyRoute(route);
+      if (malformed) {
+        setError("That link isn't a valid page — showing the board instead.");
+        history.replaceState(null, '', buildHash({ page: 'board' }));
+      }
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, [applyRoute]);
   const refresh = useCallback(async () => {
     const next = await api<Snapshot>('/snapshot');
     setSnapshot(next);
@@ -1187,7 +1242,12 @@ export default function App() {
         ws.current = socket;
         socket.onopen = () => {
           setConnected(true);
-          if (selectedRef.current) void loadDetail(selectedRef.current);
+          live.current.forEach((fn) => fn({ kind: 'connection_open' }));
+          const id = selectedRef.current;
+          if (id)
+            void loadDetail(id).catch((error) => {
+              if (selectedRef.current === id) setError(errorMessage(error));
+            });
         };
         socket.onmessage = (message) => {
           const payload = JSON.parse(message.data);
@@ -1262,9 +1322,13 @@ export default function App() {
       setSelectedItems([]);
       setFeedback('');
       setTerminalId(undefined);
-      void loadDetail(selectedId).catch((e) => setError(errorMessage(e)));
+      void loadDetail(selectedId).catch((e) => {
+        if (selectedRef.current !== selectedId) return;
+        setError(`Couldn't open that project: ${errorMessage(e)}`);
+        goTo({ page: 'board' }, true);
+      });
     }
-  }, [selectedId, loadDetail]);
+  }, [selectedId, loadDetail, goTo]);
   const send = useCallback((data: unknown) => {
     if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(JSON.stringify(data));
   }, []);
@@ -1296,18 +1360,19 @@ export default function App() {
       }
     });
   function openProject(p: Project) {
-    setSelectedId(p.id);
-    setTab(
-      p.status === 'awaiting_plan'
-        ? 'Plan'
-        : p.status === 'awaiting_result'
-          ? 'Review'
-          : 'Overview',
-    );
+    goTo({
+      page: 'project',
+      id: p.id,
+      tab:
+        p.status === 'awaiting_plan'
+          ? 'Plan'
+          : p.status === 'awaiting_result'
+            ? 'Review'
+            : 'Overview',
+    });
   }
   function navigate(next: Page) {
-    setPage(next);
-    setSelectedId(undefined);
+    goTo({ page: next });
   }
   async function loadModels() {
     try {
@@ -1453,7 +1518,7 @@ export default function App() {
               </div>
             ) : (
               <>
-                <button className="back-link" onClick={() => setSelectedId(undefined)}>
+                <button className="back-link" onClick={() => goTo({ page: 'board' })}>
                   <ArrowLeft size={15} /> All projects
                 </button>
                 <div className="page-heading project-heading">
@@ -1532,7 +1597,7 @@ export default function App() {
                       <button
                         className={tab === t ? 'active' : ''}
                         key={t}
-                        onClick={() => setTab(t)}
+                        onClick={() => goTo({ page: 'project', id: selectedId!, tab: t })}
                       >
                         {t}
                         {t === 'Review' && !!p!.review?.items.length && (
@@ -2431,7 +2496,7 @@ export default function App() {
                         <button
                           className="text-link"
                           onClick={() => {
-                            setPage('board');
+                            navigate('board');
                             setFilter(r.id);
                           }}
                         >
@@ -2635,6 +2700,7 @@ export default function App() {
       {projectModal && (
         <NewProject
           repositories={snapshot.repositories}
+          initialRepoId={filter}
           skills={snapshot.skills}
           models={models}
           close={() => setProjectModal(false)}

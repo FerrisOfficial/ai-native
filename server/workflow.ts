@@ -43,7 +43,12 @@ export class Workflow {
     public dataRoot: string,
     public skillsRoot: string,
     public runner: CommandRunner = run,
+    options: { deferRecovery?: boolean } = {},
   ) {
+    if (!options.deferRecovery) this.recover();
+  }
+  recover() {
+    const store = this.store;
     for (const p of store.all<Project>('projects'))
       if (['running', 'queued'].includes(p.status))
         this.save({
