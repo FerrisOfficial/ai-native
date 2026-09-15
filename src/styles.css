@@ -1858,6 +1858,84 @@ main {
   color: #b1a4bc;
   margin: 6px 17px 15px;
 }
+
+.project-card.pr-comments-card {
+  border-left: 4px solid #167d8d;
+  background: #eef9fa;
+}
+.project-card.pr-comments-card .card-ticket {
+  color: #125965;
+  font-weight: 600;
+}
+.pr-comments-panel {
+  border: 1px solid #a8d7dd;
+  border-radius: 10px;
+  padding: 16px;
+  margin: 12px 0;
+}
+.pr-comments-panel h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pr-thread-list {
+  max-height: 380px;
+  overflow: auto;
+  margin-top: 12px;
+}
+.pr-thread-option {
+  display: flex;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid #d1e7e9;
+}
+.pr-thread-option > input {
+  flex: 0 0 auto;
+  margin-top: 4px;
+}
+.pr-thread-option > div {
+  min-width: 0;
+}
+.pr-comments-panel pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow: auto;
+  font: inherit;
+  line-height: 1.5;
+}
+.pr-reply {
+  padding: 18px 0;
+  border-bottom: 1px solid #d1e7e9;
+}
+.pr-reply label {
+  display: block;
+  margin: 12px 0;
+}
+.pr-reply select,
+.pr-reply textarea {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+}
+.pr-reply label.row {
+  display: flex;
+}
+.pr-comments-panel button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #167d8d;
+  border-radius: 6px;
+  padding: 8px 12px;
+  background: #e7f5f7;
+  color: #125965;
+  cursor: pointer;
+}
+.pr-comments-panel button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .command-output {
   background: #22202b;
   color: #ccc2d7;

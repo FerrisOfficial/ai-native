@@ -58,6 +58,7 @@ import { api, bootstrap } from './api';
 import { UsagePanel } from './UsagePanel';
 import { CopyWorktree } from './CopyWorktree';
 import { UpdatePanel } from './UpdatePanel';
+import { PrPicker, PrReplies, type PrPreview } from './PrComments';
 import { needsInput } from './project-attention';
 import { taskDescriptionLimit } from '../shared/task-source';
 import { parseHash, buildHash, type Page, type Tab, type Route } from './route';
@@ -903,7 +904,9 @@ function NewProject({
   const [repoId, setRepoId] = useState(initialRepository?.id ?? ''),
     [name, setName] = useState(''),
     [ticketUrl, setTicketUrl] = useState('');
-  const [taskSource, setTaskSource] = useState<'url' | 'description'>('url');
+  const [taskSource, setTaskSource] = useState<'url' | 'description' | 'pr_comments'>('url');
+  const [prPreview, setPrPreview] = useState<PrPreview>();
+  const currentPr = prPreview?.key === `${repoId}\0${ticketUrl}` ? prPreview : undefined;
   const [taskDescription, setTaskDescription] = useState('');
   const [taskNote, setTaskNote] = useState('');
   const [branch, setBranch] = useState('');
@@ -936,10 +939,11 @@ function NewProject({
             await create({
               repoId,
               name,
-              branch,
-              reuseExistingBranch: confirmBranch && branchConfirmation.confirmed,
+              ...(taskSource === 'pr_comments'
+                ? { selectedThreadIds: currentPr?.selected, prSnapshotHash: currentPr?.fingerprint }
+                : { branch, reuseExistingBranch: confirmBranch && branchConfirmation.confirmed }),
               taskSource,
-              ...(taskSource === 'url' ? { ticketUrl, taskNote } : { taskDescription }),
+              ...(taskSource !== 'description' ? { ticketUrl, taskNote } : { taskDescription }),
               choices,
               budgetUsd: budget.trim() ? Number(budget) : null,
             });
@@ -982,21 +986,23 @@ function NewProject({
               placeholder="Add team invitations"
             />
           </Field>
-          <Field
-            label="Working branch"
-            hint={`New branches start from ${repositories.find((r) => r.id === repoId)?.baseBranch || "the repository's default branch"}. Existing branches require confirmation to continue their history. Leave empty to generate a unique name.`}
-          >
-            <input
-              maxLength={200}
-              value={branch}
-              onChange={(e) => {
-                setBranch(e.target.value);
-                setBranchConfirmation(undefined);
-              }}
-              placeholder="feature/team-invitations"
-            />
-          </Field>
-          {confirmBranch && (
+          {taskSource !== 'pr_comments' && (
+            <Field
+              label="Working branch"
+              hint={`New branches start from ${repositories.find((r) => r.id === repoId)?.baseBranch || "the repository's default branch"}. Existing branches require confirmation to continue their history. Leave empty to generate a unique name.`}
+            >
+              <input
+                maxLength={200}
+                value={branch}
+                onChange={(e) => {
+                  setBranch(e.target.value);
+                  setBranchConfirmation(undefined);
+                }}
+                placeholder="feature/team-invitations"
+              />
+            </Field>
+          )}
+          {taskSource !== 'pr_comments' && confirmBranch && (
             <div className="notice">
               <label>
                 <input
@@ -1015,17 +1021,22 @@ function NewProject({
           <Field label="Task source">
             <select
               value={taskSource}
-              onChange={(e) => setTaskSource(e.target.value as 'url' | 'description')}
+              onChange={(e) => setTaskSource(e.target.value as typeof taskSource)}
             >
               <option value="url">Ticket URL</option>
               <option value="description">Write your own task</option>
+              <option value="pr_comments">PR comments — address GitHub feedback</option>
             </select>
           </Field>
-          {taskSource === 'url' ? (
+          {taskSource !== 'description' ? (
             <>
               <Field
-                label="Ticket URL"
-                hint="The planning skill retrieves the ticket through your existing MCP or CLI tools."
+                label={taskSource === 'pr_comments' ? 'Pull request URL' : 'Ticket URL'}
+                hint={
+                  taskSource === 'pr_comments'
+                    ? 'An existing open PR in the selected GitHub repository.'
+                    : 'The planning skill retrieves the ticket through your existing MCP or CLI tools.'
+                }
               >
                 <input
                   required
@@ -1033,9 +1044,21 @@ function NewProject({
                   maxLength={4000}
                   value={ticketUrl}
                   onChange={(e) => setTicketUrl(e.target.value)}
-                  placeholder="https://linear.app/your-team/issue/…"
+                  placeholder={
+                    taskSource === 'pr_comments'
+                      ? 'https://github.com/owner/repo/pull/123'
+                      : 'https://linear.app/your-team/issue/…'
+                  }
                 />
               </Field>
+              {taskSource === 'pr_comments' && (
+                <PrPicker
+                  repoId={repoId}
+                  url={ticketUrl}
+                  preview={currentPr}
+                  onChange={setPrPreview}
+                />
+              )}
               <Field
                 label="Additional note (optional)"
                 hint="Add context, constraints, or instructions to supplement the ticket. Markdown is supported."
@@ -1103,7 +1126,12 @@ function NewProject({
           <Button
             type="submit"
             primary
-            disabled={busy || (confirmBranch && !branchConfirmation.confirmed)}
+            disabled={
+              busy ||
+              (taskSource === 'pr_comments'
+                ? !currentPr?.selected.length || currentPr.selected.length > 100
+                : confirmBranch && !branchConfirmation.confirmed)
+            }
           >
             {busy ? <LoaderCircle className="spin" size={16} /> : <ArrowRight size={16} />} Create &
             start
@@ -1314,6 +1342,7 @@ function QuestionCard({
 }
 
 export default function App() {
+  const [repliesDirty, setRepliesDirty] = useState(false);
   const initialRouteRef = useRef<{ route: Route; malformed: boolean } | undefined>(undefined);
   if (initialRouteRef.current === undefined)
     initialRouteRef.current = parseHash(window.location.hash);
@@ -1839,7 +1868,7 @@ export default function App() {
                           target="_blank"
                           rel="noreferrer"
                         >
-                          Open ticket <ExternalLink size={13} />
+                          {p!.pullRequest ? 'Open PR' : 'Open ticket'} <ExternalLink size={13} />
                         </a>
                       )}
                     </div>
@@ -1960,7 +1989,8 @@ export default function App() {
                             <a className="pr-link" href={p!.prUrl} target="_blank" rel="noreferrer">
                               <GitPullRequest size={20} />
                               <div>
-                                Draft pull request<span>{p!.prUrl}</span>
+                                {p!.pullRequest ? 'Existing pull request' : 'Draft pull request'}
+                                <span>{p!.prUrl}</span>
                               </div>
                               <ExternalLink size={16} />
                             </a>
@@ -2224,6 +2254,15 @@ export default function App() {
                   )}
                   {tab === 'Review' && (
                     <>
+                      {p!.pullRequest && p!.replies && (
+                        <PrReplies
+                          key={`${p!.id}:${JSON.stringify(p!.replies)}`}
+                          project={p!}
+                          busy={busy}
+                          save={(replies) => action('save-replies', { replies })}
+                          onDirtyChange={setRepliesDirty}
+                        />
+                      )}
                       <div className="panel">
                         <div className="row">
                           <h3>Test results</h3>
@@ -2329,8 +2368,15 @@ export default function App() {
                                   <RefreshCw size={15} /> Request corrections
                                   {selectedItems.length ? ` (${selectedItems.length})` : ''}
                                 </Button>
-                                <Button primary disabled={busy} onClick={() => action('publish')}>
-                                  <GitPullRequest size={16} /> Approve & create draft PR
+                                <Button
+                                  primary
+                                  disabled={busy || repliesDirty}
+                                  onClick={() => action('publish')}
+                                >
+                                  <GitPullRequest size={16} />{' '}
+                                  {p!.pullRequest
+                                    ? 'Approve, update PR & publish replies'
+                                    : 'Approve & create draft PR'}
                                 </Button>
                               </div>
                             </div>
@@ -2542,7 +2588,7 @@ export default function App() {
                       </span>
                       <div>
                         <strong>{snapshot.projects.filter((p) => p.prUrl).length}</strong>
-                        <span>Pull requests created</span>
+                        <span>Pull requests linked</span>
                       </div>
                     </div>
                   </div>
@@ -2670,7 +2716,7 @@ export default function App() {
                               {group.map((p) => (
                                 <button
                                   key={p.id}
-                                  className="project-card"
+                                  className={`project-card${p.taskSource === 'pr_comments' ? ' pr-comments-card' : ''}`}
                                   onClick={() => openProject(p)}
                                 >
                                   <div className="row">
@@ -2682,7 +2728,12 @@ export default function App() {
                                   </div>
                                   <h3>{p.name}</h3>
                                   <div className="card-ticket">
-                                    {p.taskSource === 'description' ? (
+                                    {p.taskSource === 'pr_comments' ? (
+                                      <>
+                                        <GitPullRequest size={12} /> PR comments · #
+                                        {p.pullRequest?.number}
+                                      </>
+                                    ) : p.taskSource === 'description' ? (
                                       <>
                                         <ClipboardList size={11} />
                                         Own task

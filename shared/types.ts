@@ -92,7 +92,10 @@ export type Project = {
   id: string;
   name: string;
   /** Missing source on older projects means a ticket URL. */
-  taskSource?: 'url' | 'description';
+  taskSource?: 'url' | 'description' | 'pr_comments';
+  pullRequest?: PullRequestSnapshot;
+  replies?: ReplyDraft[];
+  approvedReplies?: string;
   ticketUrl?: string;
   taskDescription?: string;
   taskNote?: string;
@@ -216,3 +219,42 @@ export interface CommandPermission {
   createdAt: string;
   revokedAt?: string;
 }
+
+export type PrComment = {
+  id: string;
+  body: string;
+  url: string;
+  author: string;
+  viewerCanUpdate: boolean;
+};
+export type PrThread = {
+  id: string;
+  kind: 'review' | 'conversation';
+  path?: string;
+  line?: number;
+  isResolved: boolean;
+  comments: PrComment[];
+};
+export type PullRequestSnapshot = {
+  id: string;
+  number: number;
+  url: string;
+  repo: string;
+  title: string;
+  body: string;
+  headOid: string;
+  headBranch: string;
+  threads: PrThread[];
+};
+export const replyDraftSchema = z.object({
+  threadId: z.string().min(1),
+  decision: z.enum(['fix', 'explain', 'clarify']),
+  body: z.string().trim().min(1).max(50000),
+  updateCommentId: z.string().min(1).optional(),
+  resolve: z.boolean().default(false),
+});
+export type ReplyDraft = z.infer<typeof replyDraftSchema> & {
+  commentId?: string;
+  publishedBody?: string;
+  resolved?: boolean;
+};

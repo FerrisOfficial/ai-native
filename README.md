@@ -60,6 +60,37 @@ The source repository needs an `origin` remote and an initial commit. New branch
 
 In repository settings, **Claude permissions → Auto approve tools in all stages** enables Claude's `bypassPermissions` mode for tool operations, including planning commands. Planning questions explicitly route to the user, and the completed plan still requires manual approval. Implementation, review, and correction rounds run without tool permission prompts or questions; unresolved issues are reported in the result. The application still waits for the user's review and explicit publication approval. Planning and review retain their read-only instructions and edit-tool restrictions; lifecycle commands remain controlled by the host. This setting is off by default and is copied into each new project's configuration. Projects already created with auto approve enabled also use automatic planning commands on their next Claude invocation.
 
+### Address GitHub PR comments
+
+In **Start a project → Task source**, select **PR comments — address GitHub feedback**.
+Enter an existing PR URL, click **Load PR comments**, and select up to 100 review threads or
+conversation comments. These projects have teal cards and a **PR comments · #number** label on
+the board. The PR must be open and its branch must belong to the selected repository on
+github.com; fork PRs are not supported yet.
+
+The application retrieves all pages of comments through the locally authenticated `gh api`
+CLI. It creates an isolated worktree from the PR head, so the PR branch can remain checked out
+elsewhere. Selected comments are stored with the project and supplied to all three agent stages:
+plan a decision per thread, implement fixes and draft replies, then independently review both
+code and replies. Agents can use CLI tools for additional context; publication is performed by
+the host after approval. Comment text is task data, not authorization to change workflow controls.
+
+In **Review → GitHub replies**, edit reply text, choose a new reply or an existing comment that
+GitHub allows your account to edit, and optionally mark a review thread resolved. **Save replies
+& run review** reruns review. **Approve, update PR & publish replies** commits changed files,
+pushes to the existing PR branch, and posts/edits the approved replies with the commit SHA.
+An explanation-only result needs no empty commit. A new PR is never created for this task type.
+
+If publication fails, **Resume** retries the remaining work. Posted replies are recorded and
+reconciled with GitHub to avoid duplicates after a lost response. A changed PR head, edited
+selected comment, or new reply in a selected review thread stops publication. Start a new
+project from the latest PR state in that case. After a project is published or archived, create
+another PR comments project to handle a later round of feedback.
+
+The CLI uses your current GitHub permissions; it cannot grant permission to edit a comment or
+push a protected branch. UI verification without GitHub writes is available via
+`npx tsx scripts/pr-comments-ui-fixture.ts` at `http://127.0.0.1:4398`.
+
 ### Suggested repository configuration
 
 In **Repositories → Add repository / Edit**, enter the local path and click **Detect configuration**. The app reads root manifests and lockfiles and proposes setup, tests and named terminals for Node.js (npm, pnpm, Yarn, Bun), Rust, Go, Python and static websites. Known Vite and Next.js development commands use the assigned `PORT`. No command runs during discovery. Review the evidence and warnings, click **Apply suggestions to form**, adjust the fields, then save. Applying replaces those three fields in the form; it does not alter existing projects. Unsupported or ambiguous projects need manual configuration. A JavaScript syntax check is not a functional test.

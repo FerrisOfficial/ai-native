@@ -141,10 +141,14 @@ export class GitService {
           [
             'rev-parse',
             '--verify',
-            `refs/remotes/origin/${existing === 'remote' ? p.branch : p.config.baseBranch}^{commit}`,
+            `refs/remotes/origin/${p.pullRequest?.headBranch ?? (existing === 'remote' ? p.branch : p.config.baseBranch)}^{commit}`,
           ],
           p.config.path,
         );
+        if (p.pullRequest && base !== p.pullRequest.headOid)
+          throw new Error(
+            'The PR branch changed before workspace creation. Load the PR again in a new project.',
+          );
         await this.git(['worktree', 'add', '-b', p.branch, p.worktree, base], p.config.path);
       }
     }
@@ -257,7 +261,10 @@ export class GitService {
       );
     }
     const changes = await this.git(['diff', '--cached', '--name-only'], p.worktree);
-    if (!changes) throw new Error('No changes to commit');
+    if (!changes) {
+      if (p.pullRequest) return this.git(['rev-parse', 'HEAD'], p.worktree);
+      throw new Error('No changes to commit');
+    }
     const staged = (await this.git(['diff', '--cached', '--name-only', '-z'], p.worktree)).split(
       '\0',
     );
@@ -273,7 +280,7 @@ export class GitService {
       [
         'commit',
         '-m',
-        `${p.name}\n\n${p.taskSource === 'description' ? 'Task source: user-provided description' : `Ticket: ${p.ticketUrl}`}\n\nAI-Native-Project: ${p.id}\nAI-Native-Approval: ${p.acceptedFingerprint}`,
+        `${p.name}\n\n${p.pullRequest ? `PR comments: ${p.pullRequest.url}` : p.taskSource === 'description' ? 'Task source: user-provided description' : `Ticket: ${p.ticketUrl}`}\n\nAI-Native-Project: ${p.id}\nAI-Native-Approval: ${p.acceptedFingerprint}`,
       ],
       p.worktree,
     );
@@ -296,6 +303,22 @@ export class GitService {
     );
     if (dirty) throw new Error('Worktree changed after the approved commit');
     const repo = this.githubRepo(p.config.remote);
+    if (p.pullRequest) {
+      if (repo.toLowerCase() !== p.pullRequest.repo.toLowerCase())
+        throw new Error('PR repository changed');
+      if (
+        this.githubRepo(
+          await this.git(['remote', 'get-url', 'origin'], p.worktree),
+        ).toLowerCase() !== repo.toLowerCase()
+      )
+        throw new Error('Origin changed since this PR project was created');
+      await this.git(['check-ref-format', '--branch', p.pullRequest.headBranch], p.worktree);
+      await this.git(
+        ['push', 'origin', `${p.commitSha}:refs/heads/${p.pullRequest.headBranch}`],
+        p.worktree,
+      );
+      return p.pullRequest.url;
+    }
     await this.git(['push', '--set-upstream', 'origin', p.branch], p.worktree);
     const args = [
       'pr',

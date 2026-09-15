@@ -253,6 +253,12 @@ export async function createApp(
     workflow.repository(request.body, request.params.id),
   );
   app.post('/api/projects', async (request) => workflow.create(request.body));
+  app.post('/api/pull-requests/preview', async (request) => {
+    const { repoId, url } = z
+      .object({ repoId: z.string(), url: z.string().max(4000) })
+      .parse(request.body);
+    return workflow.previewPr(repoId, url);
+  });
   app.get<{ Params: { id: string } }>('/api/projects/:id', async (request) =>
     workflow.detail(request.params.id),
   );
@@ -291,7 +297,9 @@ export async function createApp(
             .object({ items: z.array(z.string()), feedback: z.string() })
             .parse(request.body);
           workflow.correct(id, body.items, body.feedback);
-        } else if (action === 'publish') await workflow.approvePublication(id);
+        } else if (action === 'save-replies')
+          workflow.saveReplies(id, z.object({ replies: z.unknown() }).parse(request.body).replies);
+        else if (action === 'publish') await workflow.approvePublication(id);
         else if (action === 'archive') await workflow.archive(id);
         else if (action === 'remove-worktree') await workflow.removeWorktree(id);
         else if (action === 'reverify') {

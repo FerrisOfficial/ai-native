@@ -12,7 +12,14 @@ import { Workflow } from '../server/workflow.js';
 import { run, checked, type CommandRunner } from '../server/process.js';
 import { scanSkills, snapshotSkills } from '../server/skills.js';
 import { createApp } from '../server/app.js';
-import type { Project, Question, Session, TerminalRecord } from '../shared/types.js';
+import type {
+  Project,
+  Question,
+  Session,
+  TerminalRecord,
+  PullRequestSnapshot,
+} from '../shared/types.js';
+import { GithubService } from '../server/github.js';
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -73,7 +80,19 @@ class FakeAgent implements AgentDriver {
         join(request.project.worktree, 'feature.txt'),
         `Round ${request.project.round}\n`,
       );
-      return { summary: 'Added a feature.' };
+      return {
+        summary: 'Added a feature.',
+        ...(request.project.pullRequest
+          ? {
+              replies: request.project.pullRequest.threads.map((t) => ({
+                threadId: t.id,
+                decision: 'fix',
+                body: 'Fixed and checked.',
+                resolve: false,
+              })),
+            }
+          : {}),
+      };
     }
     if (this.mutateReview)
       await writeFile(join(request.project.worktree, 'unexpected.txt'), 'not allowed');
@@ -209,6 +228,148 @@ async function fixture() {
   };
   return { root, repo, skills, store, git, agent, w, state, repository, create, review };
 }
+
+describe('PR comment workflow with real Git', () => {
+  it.each([false, true])(
+    'plans, reviews, edits replies and resumes publication without duplicates (no code: %s)',
+    async (noCode) => {
+      const f = await fixture();
+      await f.git.git(['push', 'origin', 'HEAD:refs/heads/pr-feedback'], f.repo);
+      const originalRunner = f.git.runner;
+      f.git.runner = async (exe, args, cwd, options) =>
+        exe === 'git' && args.join(' ') === 'remote get-url origin'
+          ? { stdout: 'https://github.com/example/repo.git', stderr: '', exitCode: 0 }
+          : originalRunner(exe, args, cwd, options);
+      const initialSha = await f.git.git(['rev-parse', 'HEAD'], f.repo);
+      const live: PullRequestSnapshot = {
+        id: 'PR_fixture',
+        number: 40,
+        repo: 'example/repo',
+        url: 'https://github.com/example/repo/pull/40',
+        title: 'Existing PR',
+        body: 'Fix feedback',
+        headOid: initialSha,
+        headBranch: 'pr-feedback',
+        threads: [
+          {
+            id: 'T1',
+            kind: 'review',
+            path: 'feature.txt',
+            isResolved: false,
+            comments: [
+              {
+                id: 'C1',
+                body: 'Please add an example',
+                author: 'reviewer',
+                url: 'https://github.com/example/repo/pull/40#discussion_r1',
+                viewerCanUpdate: false,
+              },
+            ],
+          },
+        ],
+      };
+      let writes = 0;
+      let failAfterReply = true;
+      const ghRunner: CommandRunner = async (_exe, args) => {
+        const payload = JSON.parse(await readFile(args.at(-1)!, 'utf8'));
+        if (payload.query.includes('resolveReviewThread')) {
+          live.threads[0].isResolved = true;
+          return {
+            stdout: JSON.stringify({ data: { resolveReviewThread: { thread: { id: 'T1' } } } }),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        expect(payload.query).toContain('addPullRequestReviewThreadReply');
+        writes++;
+        live.threads[0].comments.push({
+          id: 'reply',
+          body: payload.variables.input.body,
+          url: '',
+          author: 'me',
+          viewerCanUpdate: true,
+        });
+        if (failAfterReply) {
+          failAfterReply = false;
+          throw new Error('Lost reply response');
+        }
+        return {
+          stdout: JSON.stringify({
+            data: { addPullRequestReviewThreadReply: { comment: { id: 'reply' } } },
+          }),
+          stderr: '',
+          exitCode: 0,
+        };
+      };
+      f.w.github = new GithubService(ghRunner);
+      f.w.github.load = async () => {
+        live.headOid = (
+          await f.git.git(['ls-remote', 'origin', 'refs/heads/pr-feedback'], f.repo)
+        ).split(/\s/)[0];
+        return structuredClone(live);
+      };
+      if (noCode) {
+        const execute = f.agent.execute.bind(f.agent);
+        f.agent.execute = async (request) =>
+          request.stage === 'implementation'
+            ? {
+                summary: 'Explain the existing behavior',
+                replies: [
+                  {
+                    threadId: 'T1',
+                    decision: 'explain',
+                    body: 'Existing behavior is correct.',
+                    resolve: false,
+                  },
+                ],
+              }
+            : execute(request);
+      }
+      const preview = await f.w.previewPr(f.repository.id, live.url);
+      const p = await f.w.create({
+        name: 'Address PR feedback',
+        taskSource: 'pr_comments',
+        ticketUrl: live.url,
+        repoId: f.repository.id,
+        selectedThreadIds: ['T1'],
+        prSnapshotHash: preview.fingerprint,
+      });
+      await settled(f.w, p.id, 'awaiting_plan');
+      expect(f.w.get(p.id).baseCommit).toBe(initialSha);
+      expect(p.branch).not.toBe('pr-feedback');
+      f.w.approvePlan(p.id);
+      const reviewed = await settled(f.w, p.id, 'awaiting_result');
+      expect(reviewed.replies).toHaveLength(1);
+      expect(writes).toBe(0);
+      expect(f.agent.calls.find((c) => c.stage === 'review')!.prompt).toContain(
+        'NOT review defects',
+      );
+      f.w.saveReplies(
+        p.id,
+        reviewed.replies!.map((r) => ({
+          ...r,
+          body: 'Approved reply with an example.',
+          resolve: true,
+        })),
+      );
+      await settled(f.w, p.id, 'awaiting_result');
+      await f.w.approvePublication(p.id);
+      const blocked = await settled(f.w, p.id, 'blocked');
+      expect(blocked.error).toContain('Lost reply response');
+      expect(blocked.commitSha).toBeTruthy();
+      expect(live.headOid).toBe(blocked.commitSha);
+      expect(blocked.commitSha === initialSha).toBe(noCode);
+      f.w.enqueue(p.id);
+      const published = await settled(f.w, p.id, 'published');
+      expect(writes).toBe(1);
+      expect(published.prUrl).toBe(live.url);
+      expect(published.replies![0]).toMatchObject({ commentId: 'reply', resolved: true });
+      expect(f.state.ghCreates).toBe(0);
+      expect(live.threads[0].comments[1].body).toContain('Approved reply with an example.');
+    },
+    60000,
+  );
+});
 
 describe('Workflow lifecycle with real Git and deterministic Claude', () => {
   it('preserves a ticket note through planning, implementation and review', async () => {
